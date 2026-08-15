@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>YouTube Ad Skipper — Settings</title>
+<link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <header>
+    <img src="icons/icon48.png" alt="" width="28" height="28" />
+    <h1>YouTube Ad Skipper — Settings &amp; Logs</h1>
+  </header>
+
+  <section class="card">
+    <h2>Behavior</h2>
+    <div class="row">
+      <label class="field-label" for="autoSkip">
+        <span>Auto-skip ads</span>
+        <span class="hint">Off = shows a manual "Skip Ad" button on the player instead</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="autoSkip" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="row">
+      <label class="field-label" for="muteDuringAds">
+        <span>Mute during ads</span>
+        <span class="hint">Automatically unmutes when the ad ends</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="muteDuringAds" />
+        <span class="slider"></span>
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Log housekeeping</h2>
+    <div class="row">
+      <label class="field-label" for="maxLogEntries">
+        <span>Max log entries</span>
+        <span class="hint">Once the skip log reaches this size, the oldest entries are automatically rotated out (10–5000)</span>
+      </label>
+      <input type="number" id="maxLogEntries" min="10" max="5000" step="10" />
+    </div>
+    <p class="usage" id="usageLine">Loading storage usage…</p>
+    <div class="actions">
+      <button id="clearLogs" class="danger-button">Clear logs</button>
+      <span class="saved-note" id="savedNote"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Skip log <span id="logCount" class="count-badge"></span></h2>
+    <div class="table-wrap">
+      <table id="logsTable">
+        <thead>
+          <tr><th>Time</th><th>Trigger</th><th>Video</th></tr>
+        </thead>
+        <tbody id="logsBody"></tbody>
+      </table>
+      <p id="emptyState" class="empty-state">No ads skipped yet.</p>
+    </div>
+  </section>
+
+  <footer>
+    Logs are stored locally in this browser only (chrome.storage.local) and are
+    never sent anywhere. The lifetime "ads skipped" count shown in the toolbar
+    popup is tracked separately and is not affected by log rotation or by
+    clearing the log below.
+  </footer>
+
+  <script src="options.js"></script>
+</body>
+</html>

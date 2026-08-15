@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>YouTube Ad Skipper</title>
+<link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <img src="icons/icon48.png" alt="" width="24" height="24" />
+    <h1>YouTube Ad Skipper</h1>
+  </header>
+
+  <section class="row">
+    <label class="switch-label" for="autoSkip">
+      <span>Auto-skip ads</span>
+      <span class="hint">Off = shows a manual "Skip Ad" button instead</span>
+    </label>
+    <label class="switch">
+      <input type="checkbox" id="autoSkip" />
+      <span class="slider"></span>
+    </label>
+  </section>
+
+  <section class="row">
+    <label class="switch-label" for="muteDuringAds">
+      <span>Mute during ads</span>
+      <span class="hint">Automatically unmutes when the ad ends</span>
+    </label>
+    <label class="switch">
+      <input type="checkbox" id="muteDuringAds" />
+      <span class="slider"></span>
+    </label>
+  </section>
+
+  <section class="stats">
+    <div class="stat">
+      <div class="stat-value" id="totalSkipped">0</div>
+      <div class="stat-label">ads skipped (all time)</div>
+    </div>
+    <button id="resetStats" class="link-button">Reset</button>
+  </section>
+
+  <section class="row row-nav">
+    <button id="openOptions" class="primary-button">Settings &amp; skip logs</button>
+  </section>
+
+  <footer>
+    Works by detecting YouTube's own ad player state and using its
+    Skip button / seeking the ad video. Not affiliated with Google or
+    YouTube; may break if YouTube changes its player.
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

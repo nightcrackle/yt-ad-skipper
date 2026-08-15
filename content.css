@@ -1,0 +1,40 @@
+#yt-ad-skipper-manual-btn {
+  position: absolute;
+  right: 12px;
+  bottom: 60px;
+  z-index: 2147483647;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-family: Roboto, Arial, sans-serif;
+  cursor: pointer;
+}
+
+#yt-ad-skipper-manual-btn:hover {
+  background: rgba(0, 0, 0, 1);
+}
+
+#yt-ad-skipper-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 2147483647;
+  background: rgba(20, 20, 20, 0.92);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: Roboto, Arial, sans-serif;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+#yt-ad-skipper-toast.yt-ad-skipper-toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
