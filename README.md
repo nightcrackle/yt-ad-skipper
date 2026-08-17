@@ -1,6 +1,11 @@
 # YouTube Ad Skipper
 
-[![Validate extension](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml/badge.svg)](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml)
+[![Validate extension](https://github.com/OWNER/REPO/actions/workflows/validate.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/validate.yml)
+
+> The badge above won't resolve until this repo is pushed to GitHub — replace
+> `OWNER/REPO` in the two URLs with your actual GitHub username/org and repo
+> name once it exists there. See [CI validation status](#ci-validation-status)
+> below for the actual last-run result in the meantime.
 
 A Chrome extension (Manifest V3) that skips YouTube video ads by detecting
 YouTube's own in-player ad state and driving the controls it already
@@ -113,9 +118,12 @@ other and silently drop a log entry.
 - `options.html` / `options.css` / `options.js` — the full settings page:
   toggles, max-log-entries rotation setting, storage usage, clear-logs
   button, and the skip log table.
-- `icons/` — toolbar/extension icons.
-- `gen_icons.py` — the script used to generate the icons (not needed at
-  runtime).
+- `icons/` — toolbar/extension icons (`icon16.png`, `icon48.png`,
+  `icon128.png`), generated from `icons/icon-source.png`.
+- `gen_icons.py` — regenerates the three icon sizes from
+  `icons/icon-source.png` (pads to square, then resizes). Not needed at
+  runtime; re-run it (`python3 gen_icons.py`) after replacing the source
+  artwork.
 
 ## Updating / debugging
 
@@ -145,6 +153,11 @@ signing key. `.gitignore` already excludes `*.pem`, `*.crx`, and `*.zip`.
 
 ### CI validation status
 
+No GitHub Actions run exists yet — this repo hasn't been pushed to GitHub in
+this session. Below is the actual output of the last local run of
+`scripts/validate.sh` (the exact script CI calls), so this reflects a real
+result, not a placeholder:
+
 ```text
 $ bash scripts/validate.sh
 == Validating manifest.json ==
@@ -164,9 +177,14 @@ $ echo $?
 0
 ```
 
+Last run: 2026-08-14 14:25 UTC. This block is a static snapshot — it will go
+stale as the code changes. Once pushed to GitHub, remove this section (or
+just point to it in the badge) and rely on the live Actions run instead.
+
 ## License
 
-[GNU GPLv3](LICENSE)
+[MIT](LICENSE) — update the copyright line in `LICENSE` with your own name
+or handle before publishing (it currently has a placeholder).
 
 ## Disclaimer
 

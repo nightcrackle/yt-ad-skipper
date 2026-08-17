@@ -1,45 +1,54 @@
-from PIL import Image, ImageDraw
+"""
+Generates the extension's toolbar icons (16/48/128px) from a single source
+image: icons/icon-source.png.
 
-def make_icon(size, path):
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
+The source is padded to a square canvas first (so a non-square source isn't
+stretched/distorted), then downsampled with high-quality resampling for
+each target size. Re-run this after replacing icon-source.png with new
+artwork:
 
-    # red rounded-square background (YouTube-ish red)
-    margin = max(1, size // 16)
-    d.rounded_rectangle(
-        [margin, margin, size - margin, size - margin],
-        radius=size // 4,
-        fill=(204, 0, 0, 255),
-    )
+    python3 gen_icons.py
+"""
 
-    # white "skip" glyph: two triangles + a bar, like a media skip-forward icon
-    cy = size / 2
-    tri_h = size * 0.34
-    tri_w = size * 0.22
-    gap = size * 0.06
-    start_x = size * 0.27
+from pathlib import Path
+from PIL import Image
 
-    def triangle(x0):
-        return [
-            (x0, cy - tri_h / 2),
-            (x0, cy + tri_h / 2),
-            (x0 + tri_w, cy),
-        ]
+ICON_DIR = Path(__file__).parent / "icons"
+SOURCE = ICON_DIR / "icon-source.png"
+SIZES = (16, 48, 128)
 
-    d.polygon(triangle(start_x), fill=(255, 255, 255, 255))
-    d.polygon(triangle(start_x + tri_w + gap), fill=(255, 255, 255, 255))
 
-    bar_x = start_x + 2 * tri_w + 2 * gap
-    bar_w = size * 0.07
-    d.rounded_rectangle(
-        [bar_x, cy - tri_h / 2, bar_x + bar_w, cy + tri_h / 2],
-        radius=bar_w / 3,
-        fill=(255, 255, 255, 255),
-    )
+def pad_to_square(img):
+    """Pad an image to a square canvas, centered, without distorting it."""
+    w, h = img.size
+    if w == h:
+        return img
 
-    img.save(path)
+    side = max(w, h)
+    img = img.convert("RGBA")
 
-for s in (16, 48, 128):
-    make_icon(s, f"icons/icon{s}.png")
+    # Sample the source's own corner pixel so the padding matches its
+    # existing background instead of introducing a seam.
+    fill = img.getpixel((0, 0))
 
-print("done")
+    canvas = Image.new("RGBA", (side, side), fill)
+    canvas.paste(img, ((side - w) // 2, (side - h) // 2), img)
+    return canvas
+
+
+def make_icons():
+    if not SOURCE.exists():
+        raise SystemExit(f"Missing source image: {SOURCE}")
+
+    source = Image.open(SOURCE)
+    squared = pad_to_square(source)
+
+    for size in SIZES:
+        resized = squared.resize((size, size), Image.LANCZOS)
+        out_path = ICON_DIR / f"icon{size}.png"
+        resized.save(out_path)
+        print(f"wrote {out_path} ({size}x{size})")
+
+
+if __name__ == "__main__":
+    make_icons()

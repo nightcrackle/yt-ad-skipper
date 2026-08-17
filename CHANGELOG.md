@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to this project are documented here.
+Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
+
+## [1.1.1]
+
+### Changed
+- Replaced the placeholder red skip-icon artwork with the provided devil-head
+  logo (`icons/icon-source.png`) as the toolbar/extension icon at all three
+  sizes.
+- `gen_icons.py` now resizes a source image (padding it to square first)
+  instead of programmatically drawing an icon.
 
 ## [1.1.0]
 
