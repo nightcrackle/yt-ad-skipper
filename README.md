@@ -178,8 +178,7 @@ just point to it in the badge) and rely on the live Actions run instead.
 
 ## License
 
-[MIT](LICENSE) — update the copyright line in `LICENSE` with your own name
-or handle before publishing (it currently has a placeholder).
+[GNU GPLv3](LICENSE)
 
 ## Disclaimer
 
