@@ -4,6 +4,8 @@ const MAX_MAX_LOG_ENTRIES = 5000;
 
 const autoSkipEl = document.getElementById('autoSkip');
 const muteDuringAdsEl = document.getElementById('muteDuringAds');
+const hideAdblockWarningEl = document.getElementById('hideAdblockWarning');
+const autoReloadOnBlockEl = document.getElementById('autoReloadOnBlock');
 const maxLogEntriesEl = document.getElementById('maxLogEntries');
 const usageLineEl = document.getElementById('usageLine');
 const clearLogsBtn = document.getElementById('clearLogs');
@@ -23,10 +25,18 @@ function flashSaved() {
 
 function loadSettings() {
   chrome.storage.sync.get(
-    { autoSkip: true, muteDuringAds: true, maxLogEntries: DEFAULT_MAX_LOG_ENTRIES },
+    {
+      autoSkip: true,
+      muteDuringAds: true,
+      hideAdblockWarning: true,
+      autoReloadOnBlock: true,
+      maxLogEntries: DEFAULT_MAX_LOG_ENTRIES,
+    },
     (items) => {
       autoSkipEl.checked = items.autoSkip;
       muteDuringAdsEl.checked = items.muteDuringAds;
+      hideAdblockWarningEl.checked = items.hideAdblockWarning;
+      autoReloadOnBlockEl.checked = items.autoReloadOnBlock;
       maxLogEntriesEl.value = items.maxLogEntries;
     }
   );
@@ -38,6 +48,14 @@ autoSkipEl.addEventListener('change', () => {
 
 muteDuringAdsEl.addEventListener('change', () => {
   chrome.storage.sync.set({ muteDuringAds: muteDuringAdsEl.checked }, flashSaved);
+});
+
+hideAdblockWarningEl.addEventListener('change', () => {
+  chrome.storage.sync.set({ hideAdblockWarning: hideAdblockWarningEl.checked }, flashSaved);
+});
+
+autoReloadOnBlockEl.addEventListener('change', () => {
+  chrome.storage.sync.set({ autoReloadOnBlock: autoReloadOnBlockEl.checked }, flashSaved);
 });
 
 maxLogEntriesEl.addEventListener('change', () => {

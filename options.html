@@ -36,6 +36,40 @@
   </section>
 
   <section class="card">
+    <h2>Ad-block warning</h2>
+    <p class="hint section-intro">
+      If YouTube shows an "Ad blockers are not allowed" dialog and pauses
+      playback, these two settings remove it and try to recover playback.
+      This is a more direct point of conflict with YouTube's own
+      enforcement than ad-skipping — see the README's disclaimer.
+    </p>
+    <div class="row">
+      <label class="field-label" for="hideAdblockWarning">
+        <span>Remove the ad-block warning banner</span>
+        <span class="hint">Detects and removes YouTube's ad-blocker-detected dialog/overlay</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="hideAdblockWarning" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="row">
+      <label class="field-label" for="autoReloadOnBlock">
+        <span>Auto-reload if playback is stuck</span>
+        <span class="hint">
+          If removing the banner leaves the video paused, reload the page
+          (up to 2 tries per video, resuming near where you left off).
+          Requires the setting above.
+        </span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="autoReloadOnBlock" />
+        <span class="slider"></span>
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>Log housekeeping</h2>
     <div class="row">
       <label class="field-label" for="maxLogEntries">

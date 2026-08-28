@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0]
+
+### Added
+- Detects and removes enforcement dialog/overlay (`hideAdblockWarning` setting, 
+  default on).
+- If playback is left paused/stuck after the dialog is removed, reloads the
+  page to recover it (`autoReloadOnBlock` setting, default on), preserving
+  the current playback position via the `t=` URL parameter and capped at 2
+  auto-reload attempts per video (tracked in `sessionStorage`) to avoid a
+  reload loop.
+- Both settings are in the options page under a new "Ad-block warning"
+  section, with a note that this is a more direct point of conflict with
+  YouTube's enforcement than ad-skipping.
+
 ## [1.1.1]
 
 ### Changed

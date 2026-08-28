@@ -35,6 +35,11 @@ ads — this extension does not use that approach.
 - **Skip log:** every skip is recorded (time, video title/link, and whether
   it was auto or manual) in a full **Settings & skip logs** page, opened
   from the "Settings & skip logs" button in the popup. See below.
+- **Ad-block warning removal:** if YouTube shows its "Ad blockers are not
+  allowed on YouTube" dialog and pauses the video, the extension removes
+  the dialog and, if playback is still stuck, reloads the page to recover
+  it. See "Ad-block warning handling" below — this one is worth reading
+  before you rely on it.
 
 ## Skip log, rotation, and clearing
 
@@ -62,6 +67,42 @@ log go through a single serialized queue in `background.js` so that ads
 skipped in two YouTube tabs at nearly the same moment can't race each
 other and silently drop a log entry.
 
+## Ad-block warning handling
+
+YouTube can detect ad blockers (including the ad-skipping this extension
+does) and respond with an "Ad blockers are not allowed on YouTube" dialog
+that, if ignored, pauses the video and leaves it stuck. Two independent
+settings on the options page address this — **Behavior** is the ad-skip
+toggles above; these live under **Ad-block warning**:
+
+- **Remove the ad-block warning banner** (default on) — detects the
+  dialog/overlay (by known element names, falling back to a text-content
+  scan for phrases like "ad blockers are not allowed" so it's more likely
+  to survive a YouTube markup change) and removes it along with its modal
+  backdrop.
+- **Auto-reload if playback is stuck** (default on, requires the setting
+  above) — if the video is still paused shortly after the banner is
+  removed, reloads the page. Removing the dialog alone doesn't resume a
+  video YouTube has already paused for this reason, so a reload is the
+  practical fix. Your playback position is preserved via the `t=` URL
+  parameter, and this is capped at 2 auto-reload attempts per video
+  (tracked in `sessionStorage`, so it resets per tab/session) specifically
+  to avoid a reload loop if YouTube re-triggers the block immediately
+  again — past that cap it shows a toast telling you to reload manually
+  instead of retrying forever.
+
+This is a more direct point of conflict with YouTube's own enforcement
+than ad-skipping is: skipping ads uses controls YouTube's player already
+exposes, while this specifically targets YouTube's countermeasure against
+ad blockers. It depends on YouTube's current dialog markup/wording just
+like the skip-button selectors do, is very likely to need updating as
+YouTube adjusts its detection (this is an active arms race — expect this
+to break periodically), and pushing harder against a site's active
+anti-adblock enforcement is a clearer Terms-of-Service conflict than
+skipping ads was; see the Disclaimer below. If you'd rather not have the
+extension push back on this at all, turn both toggles off in the options
+page.
+
 ## Limitations (read before relying on this)
 
 - This is DOM-based: it reacts to YouTube's existing player markup and
@@ -70,8 +111,16 @@ other and silently drop a log entry.
 - Very short unskippable pre-roll ads may still play briefly before the
   extension can act.
 - If YouTube changes its player's HTML/class structure, the selectors in
-  `content.js` (`SKIP_BUTTON_SELECTORS`, `ad-showing`/`ad-interrupting`)
-  may need to be updated to match.
+  `content.js` (`SKIP_BUTTON_SELECTORS`, `ad-showing`/`ad-interrupting`,
+  `ADBLOCK_WARNING_SELECTORS`) may need to be updated to match.
+- The ad-block warning dialog is a moving target even more than the skip
+  button is — YouTube actively iterates on this specific mechanism, so
+  expect the selectors/text-matching in `content.js` to need updates over
+  time, and expect occasional false negatives (a redesigned dialog slips
+  through until selectors are updated).
+- The auto-reload recovery is best-effort: it's capped at 2 attempts per
+  video and there's no guarantee reloading actually clears the block —
+  YouTube may re-show the dialog immediately.
 - Not affiliated with Google or YouTube. Using it may be against YouTube's
   Terms of Service depending on how you use it — this is provided for
   personal, educational use, unpacked/local installation only. It is not
@@ -103,16 +152,18 @@ other and silently drop a log entry.
 
 - `manifest.json` — extension manifest (MV3).
 - `content.js` / `content.css` — runs on youtube.com, detects ads, skips
-  them, shows the manual skip button and toast notifications, and reports
-  each skip (with video title/url) to the background worker.
+  them, shows the manual skip button and toast notifications, reports each
+  skip (with video title/url) to the background worker, and detects/removes
+  YouTube's ad-block warning dialog (reloading to recover playback if
+  needed).
 - `background.js` — service worker; tracks the all-time skip counter, the
   toolbar badge, and the skip log (append + rotate + clear), all through a
   single serialized write queue.
 - `popup.html` / `popup.css` / `popup.js` — the quick-access popup
   (toggles, lifetime count, link to the full settings page).
 - `options.html` / `options.css` / `options.js` — the full settings page:
-  toggles, max-log-entries rotation setting, storage usage, clear-logs
-  button, and the skip log table.
+  ad-skip/mute toggles, ad-block-warning toggles, max-log-entries rotation
+  setting, storage usage, clear-logs button, and the skip log table.
 - `icons/` — toolbar/extension icons (`icon16.png`, `icon48.png`,
   `icon128.png`), generated from `icons/icon-source.png`.
 - `gen_icons.py` — regenerates the three icon sizes from
@@ -172,16 +223,26 @@ $ echo $?
 0
 ```
 
-Last run: 2026-08-14 14:25 UTC. This block is a static snapshot — it will go
+Last run: 2026-08-28 10:07 UTC. This block is a static snapshot — it will go
 stale as the code changes. Once pushed to GitHub, remove this section (or
 just point to it in the badge) and rely on the live Actions run instead.
 
 ## License
 
-[GNU GPLv3](LICENSE)
+[MIT](LICENSE) — update the copyright line in `LICENSE` with your own name
+or handle before publishing (it currently has a placeholder).
 
 ## Disclaimer
 
 Not affiliated with, endorsed by, or sponsored by Google or YouTube. All
 trademarks belong to their respective owners. Provided as-is for personal,
 educational use.
+
+The ad-block-warning-handling feature specifically detects and works
+around YouTube's countermeasure against ad blockers, which is a more
+direct conflict with YouTube's enforcement than ad-skipping alone. This
+project has no information on what account-level consequences, if any,
+YouTube may apply for ad-blocker use or for circumventing this dialog —
+don't assume there are none. If you'd rather avoid that risk entirely,
+disable both ad-block-warning toggles in the options page and only use
+the ad-skipping features.

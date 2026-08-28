@@ -24,12 +24,27 @@
  * to their natural end before this can act). If YouTube changes its
  * player's class names or DOM structure, the selectors below may need
  * updating.
+ *
+ * Separately, this also reacts to YouTube's ad-blocker *enforcement* UI
+ * (the "Ad blockers are not allowed on YouTube" dialog, and the playback
+ * block that follows if it's ignored):
+ *   1. When the dialog/overlay is detected, it's removed from the page.
+ *   2. If the video is left paused/stuck afterward, the page is reloaded
+ *      once or twice (capped, to avoid a reload loop), preserving your
+ *      playback position via the `t=` URL parameter, since removing the
+ *      dialog alone doesn't resume a player YouTube has already paused.
+ * Both are independently toggleable in settings. This is a more direct
+ * point of conflict with YouTube's own enforcement than ad-skipping is,
+ * it depends on YouTube's current markup/text just like the skip logic
+ * above, and YouTube can change or strengthen this mechanism at any time.
  */
 
 (() => {
   const STATE = {
     autoSkip: true,
     muteDuringAds: true,
+    hideAdblockWarning: true,
+    autoReloadOnBlock: true,
     wasMutedByUs: false,
     sessionSkipCount: 0,
     lastAdKey: null,
@@ -48,12 +63,37 @@
     '.ytp-ad-overlay-close-icon',
   ];
 
+  // Known containers YouTube has used for the "ad blockers are not allowed"
+  // enforcement dialog/error screen. These drift over time, so
+  // findAdblockWarningElement() also falls back to a text-content scan.
+  const ADBLOCK_WARNING_SELECTORS = [
+    'ytd-enforcement-message-view-model',
+    'yt-playability-error-supported-renderers',
+    'ytd-popup-container tp-yt-paper-dialog',
+  ];
+
+  // Phrases YouTube's enforcement dialog is known to use. Matched against
+  // element text as a fallback when the selectors above miss (e.g. after a
+  // YouTube markup change), and used defensively so we don't remove some
+  // unrelated dialog that happens to match a class name.
+  const ADBLOCK_WARNING_TEXT_PATTERN =
+    /ad ?blockers? (are|is) not allowed|please (disable|turn off) (your )?ad ?blocker|allow youtube ads/i;
+
+  const MAX_AUTO_RELOADS_PER_VIDEO = 2;
+
   function loadSettings() {
     chrome.storage.sync.get(
-      { autoSkip: true, muteDuringAds: true },
+      {
+        autoSkip: true,
+        muteDuringAds: true,
+        hideAdblockWarning: true,
+        autoReloadOnBlock: true,
+      },
       (items) => {
         STATE.autoSkip = items.autoSkip;
         STATE.muteDuringAds = items.muteDuringAds;
+        STATE.hideAdblockWarning = items.hideAdblockWarning;
+        STATE.autoReloadOnBlock = items.autoReloadOnBlock;
       }
     );
   }
@@ -63,6 +103,8 @@
     if (area !== 'sync') return;
     if ('autoSkip' in changes) STATE.autoSkip = changes.autoSkip.newValue;
     if ('muteDuringAds' in changes) STATE.muteDuringAds = changes.muteDuringAds.newValue;
+    if ('hideAdblockWarning' in changes) STATE.hideAdblockWarning = changes.hideAdblockWarning.newValue;
+    if ('autoReloadOnBlock' in changes) STATE.autoReloadOnBlock = changes.autoReloadOnBlock.newValue;
     if (!STATE.autoSkip) {
       // settings just changed to manual mode; make sure prompt reflects state
       updateManualPrompt(isAdShowing());
@@ -165,6 +207,86 @@
     }
   }
 
+  function findAdblockWarningElement() {
+    for (const sel of ADBLOCK_WARNING_SELECTORS) {
+      const el = document.querySelector(sel);
+      if (el) return el;
+    }
+
+    // Fallback: scan dialog-like elements for known warning phrasing, in
+    // case YouTube renamed the containers above.
+    const candidates = document.querySelectorAll(
+      'tp-yt-paper-dialog, ytd-popup-container, [role="dialog"], ytd-enforcement-message-view-model'
+    );
+    for (const el of candidates) {
+      if (ADBLOCK_WARNING_TEXT_PATTERN.test(el.textContent || '')) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  // Removes the "ad blockers are not allowed" dialog/error screen (banner
+  // #1 in the feature description) and any leftover modal backdrop it
+  // leaves behind. Returns true if something was found and removed.
+  function removeAdblockWarning() {
+    const warningEl = findAdblockWarningElement();
+    if (!warningEl) return false;
+
+    const container =
+      warningEl.closest('ytd-popup-container') ||
+      warningEl.closest('tp-yt-paper-dialog') ||
+      warningEl;
+    container.remove();
+
+    // The dialog usually comes with a dark modal backdrop that blocks
+    // clicks on the rest of the page; clear that out too.
+    document
+      .querySelectorAll('tp-yt-iron-overlay-backdrop, .ytd-popup-container[opened], #dialog[opened]')
+      .forEach((el) => el.remove());
+    document.documentElement.style.overflow = '';
+    document.body.style.overflow = '';
+
+    return true;
+  }
+
+  // Removing the dialog doesn't by itself resume a video YouTube has
+  // already paused for this reason (banner #2 in the feature description:
+  // the block that stops the video). The reliable fix is reloading the
+  // page, so this reloads at most MAX_AUTO_RELOADS_PER_VIDEO times per
+  // video (tracked in sessionStorage, which survives the reload) to avoid
+  // looping forever if YouTube re-triggers the block immediately again,
+  // and preserves the current playback position via the `t=` parameter.
+  function reloadToRecoverPlayback() {
+    const videoId = getVideoId();
+    const key = videoId ? `ytAdSkipperReloadCount:${videoId}` : null;
+    const count = key ? Number(sessionStorage.getItem(key) || '0') : 0;
+
+    if (count >= MAX_AUTO_RELOADS_PER_VIDEO) {
+      showToast('Still blocked — try reloading manually');
+      return;
+    }
+    if (key) sessionStorage.setItem(key, String(count + 1));
+
+    const video = getVideo();
+    const seconds =
+      video && isFinite(video.currentTime) ? Math.max(0, Math.floor(video.currentTime)) : 0;
+
+    let target = location.href;
+    try {
+      const url = new URL(location.href);
+      if (seconds > 0) url.searchParams.set('t', `${seconds}s`);
+      target = url.toString();
+    } catch (e) {
+      // fall back to reloading the current URL as-is
+    }
+
+    showToast('Ad-block warning detected — reloading…');
+    setTimeout(() => {
+      location.href = target;
+    }, 400);
+  }
+
   function performSkip(trigger) {
     let skipped = clickSkipIfPresent();
     closeOverlayAdsIfPresent();
@@ -240,6 +362,23 @@
     } else {
       unmuteAfterAd();
       if (!STATE.autoSkip) updateManualPrompt(false);
+    }
+
+    if (STATE.hideAdblockWarning) {
+      const removed = removeAdblockWarning();
+      if (removed) {
+        showToast('Removed YouTube ad-block warning');
+        if (STATE.autoReloadOnBlock) {
+          // Give YouTube's own pause a moment to actually apply before
+          // checking whether playback is stuck.
+          setTimeout(() => {
+            const video = getVideo();
+            if (video && video.paused) {
+              reloadToRecoverPlayback();
+            }
+          }, 800);
+        }
+      }
     }
   }
 
