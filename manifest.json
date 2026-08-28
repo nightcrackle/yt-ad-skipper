@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube Ad Skipper",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Auto-skips YouTube video ads (or prompts you to skip them) by detecting ad state in the player and clicking Skip / fast-forwarding through unskippable ads.",
   "permissions": ["storage"],
   "action": {

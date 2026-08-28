@@ -121,6 +121,16 @@ page.
 - The auto-reload recovery is best-effort: it's capped at 2 attempts per
   video and there's no guarantee reloading actually clears the block —
   YouTube may re-show the dialog immediately.
+- The toolbar icon's light rim (added by `gen_icons.py`) was tuned and
+  visually checked against Chrome's actual default light toolbar color and
+  a representative dark-theme toolbar color, not against every theme or
+  OS accent color a user might have — an unusual toolbar color could still
+  reduce contrast.
+- The popup and options page follow `prefers-color-scheme` (the OS/browser
+  light-dark preference), verified by rendering both under emulated light
+  and dark schemes. There's no extension API to read an arbitrary custom
+  Chrome theme's actual colors, so an unusual custom theme could still
+  clash even though light/dark mode itself is handled.
 - Not affiliated with Google or YouTube. Using it may be against YouTube's
   Terms of Service depending on how you use it — this is provided for
   personal, educational use, unpacked/local installation only. It is not
@@ -160,16 +170,26 @@ page.
   toolbar badge, and the skip log (append + rotate + clear), all through a
   single serialized write queue.
 - `popup.html` / `popup.css` / `popup.js` — the quick-access popup
-  (toggles, lifetime count, link to the full settings page).
+  (toggles, lifetime count, link to the full settings page). Follows the
+  OS/browser's light/dark preference (`prefers-color-scheme`) via CSS
+  custom properties defined in `popup.css`.
 - `options.html` / `options.css` / `options.js` — the full settings page:
   ad-skip/mute toggles, ad-block-warning toggles, max-log-entries rotation
-  setting, storage usage, clear-logs button, and the skip log table.
+  setting, storage usage, clear-logs button, and the skip log table. Also
+  follows light/dark preference the same way, via `options.css`.
 - `icons/` — toolbar/extension icons (`icon16.png`, `icon48.png`,
-  `icon128.png`), generated from `icons/icon-source.png`.
+  `icon128.png`), generated from `icons/icon-source.png` (which keeps its
+  original opaque background — it's the raw artwork, not a runtime icon).
 - `gen_icons.py` — regenerates the three icon sizes from
-  `icons/icon-source.png` (pads to square, then resizes). Not needed at
-  runtime; re-run it (`python3 gen_icons.py`) after replacing the source
-  artwork.
+  `icons/icon-source.png`: removes the background (transparent, feathered
+  edge, preserving enclosed shading), tight-crops with only enough padding
+  (2%) to keep the rim below from clipping — the glyph otherwise fills the
+  canvas, since a pinned toolbar icon reads as too small fast — then adds
+  a soft light rim outside the silhouette sized for visibility on Chrome's
+  dark toolbar theme (invisible on the light theme — see the icon note
+  under Limitations). Not needed at runtime; re-run it
+  (`python3 gen_icons.py`) after replacing the source artwork. Needs
+  `requirements-dev.txt` installed (`pip install -r requirements-dev.txt`).
 
 ## Updating / debugging
 
@@ -223,7 +243,7 @@ $ echo $?
 0
 ```
 
-Last run: 2026-08-28 10:07 UTC. This block is a static snapshot — it will go
+Last run: 2026-08-28 10:40 UTC. This block is a static snapshot — it will go
 stale as the code changes. Once pushed to GitHub, remove this section (or
 just point to it in the badge) and rely on the live Actions run instead.
 

@@ -1,10 +1,79 @@
+:root {
+  --page-bg: #fafafa;
+  --card-bg: #ffffff;
+  --card-border: #eeeeee;
+  --text: #1a1a1a;
+  --heading: #333333;
+  --text-secondary: #777777;
+  --text-tertiary: #888888;
+  --row-border: #f0f0f0;
+  --input-bg: #ffffff;
+  --input-border: #cccccc;
+  --slider-off: #cccccc;
+  --slider-knob: #ffffff;
+  --accent: #cc0000;
+  --usage-text: #666666;
+  --danger: #cc0000;
+  --danger-hover-bg: #fdecea;
+  --success: #1a8a3d;
+  --table-header-bg: #ffffff;
+  --table-header-text: #555555;
+  --table-border: #dddddd;
+  --table-row-border: #f2f2f2;
+  --table-row-hover: #fafafa;
+  --link: #1a73e8;
+  --badge-auto-bg: #e6f4ea;
+  --badge-auto-text: #1a8a3d;
+  --badge-manual-bg: #fff4e5;
+  --badge-manual-text: #b35c00;
+  --footer-text: #999999;
+}
+
+/* Follows the OS/browser light-dark preference (prefers-color-scheme),
+   which is what a Chrome extension page actually has access to - there's
+   no API for reading a custom Chrome theme's specific colors, so this
+   matches "light vs dark" rather than an arbitrary theme's exact
+   palette. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg: #18191b;
+    --card-bg: #26272a;
+    --card-border: #35363a;
+    --text: #e8eaed;
+    --heading: #e8eaed;
+    --text-secondary: #9aa0a6;
+    --text-tertiary: #9aa0a6;
+    --row-border: #35363a;
+    --input-bg: #1f2023;
+    --input-border: #5f6368;
+    --slider-off: #5f6368;
+    --slider-knob: #e8eaed;
+    --accent: #ff5252;
+    --usage-text: #9aa0a6;
+    --danger: #ff5252;
+    --danger-hover-bg: #3a2020;
+    --success: #4caf6d;
+    --table-header-bg: #26272a;
+    --table-header-text: #b0b4b9;
+    --table-border: #3c4043;
+    --table-row-border: #313235;
+    --table-row-hover: #2f3033;
+    --link: #8ab4f8;
+    --badge-auto-bg: #1e3a28;
+    --badge-auto-text: #7fd99a;
+    --badge-manual-bg: #3a2c10;
+    --badge-manual-text: #f0b862;
+    --footer-text: #80868b;
+  }
+}
+
 body {
   max-width: 720px;
   margin: 0 auto;
   padding: 20px 24px 40px;
   font-family: Roboto, Arial, sans-serif;
-  color: #1a1a1a;
-  background: #fafafa;
+  color: var(--text);
+  background: var(--page-bg);
 }
 
 header {
@@ -20,8 +89,8 @@ header h1 {
 }
 
 .card {
-  background: #fff;
-  border: 1px solid #eee;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
   border-radius: 8px;
   padding: 16px 18px;
   margin-bottom: 16px;
@@ -30,7 +99,7 @@ header h1 {
 .card h2 {
   font-size: 14px;
   margin: 0 0 10px;
-  color: #333;
+  color: var(--heading);
 }
 
 .row {
@@ -39,7 +108,7 @@ header h1 {
   justify-content: space-between;
   gap: 16px;
   padding: 10px 0;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--row-border);
 }
 
 .row:first-of-type {
@@ -60,7 +129,7 @@ header h1 {
 
 .hint {
   font-size: 11.5px;
-  color: #777;
+  color: var(--text-secondary);
   margin-top: 2px;
 }
 
@@ -74,8 +143,10 @@ header h1 {
   width: 90px;
   padding: 6px 8px;
   font-size: 13px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--input-border);
   border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
 }
 
 .switch {
@@ -96,7 +167,7 @@ header h1 {
   position: absolute;
   cursor: pointer;
   inset: 0;
-  background-color: #ccc;
+  background-color: var(--slider-off);
   transition: 0.15s;
   border-radius: 20px;
 }
@@ -108,13 +179,13 @@ header h1 {
   width: 14px;
   left: 3px;
   bottom: 3px;
-  background-color: white;
+  background-color: var(--slider-knob);
   transition: 0.15s;
   border-radius: 50%;
 }
 
 input:checked + .slider {
-  background-color: #cc0000;
+  background-color: var(--accent);
 }
 
 input:checked + .slider::before {
@@ -123,7 +194,7 @@ input:checked + .slider::before {
 
 .usage {
   font-size: 12px;
-  color: #666;
+  color: var(--usage-text);
   margin: 10px 0 0;
 }
 
@@ -135,9 +206,9 @@ input:checked + .slider::before {
 }
 
 .danger-button {
-  background: #fff;
-  color: #cc0000;
-  border: 1px solid #cc0000;
+  background: var(--card-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger);
   border-radius: 4px;
   padding: 7px 14px;
   font-size: 13px;
@@ -146,12 +217,12 @@ input:checked + .slider::before {
 }
 
 .danger-button:hover {
-  background: #fdecea;
+  background: var(--danger-hover-bg);
 }
 
 .saved-note {
   font-size: 12px;
-  color: #1a8a3d;
+  color: var(--success);
 }
 
 .table-wrap {
@@ -168,26 +239,26 @@ table {
 thead th {
   position: sticky;
   top: 0;
-  background: #fff;
+  background: var(--table-header-bg);
   text-align: left;
   padding: 6px 8px;
-  border-bottom: 1px solid #ddd;
-  color: #555;
+  border-bottom: 1px solid var(--table-border);
+  color: var(--table-header-text);
   font-weight: 600;
 }
 
 tbody td {
   padding: 6px 8px;
-  border-bottom: 1px solid #f2f2f2;
+  border-bottom: 1px solid var(--table-row-border);
   vertical-align: top;
 }
 
 tbody tr:hover {
-  background: #fafafa;
+  background: var(--table-row-hover);
 }
 
 tbody td a {
-  color: #1a73e8;
+  color: var(--link);
   text-decoration: none;
   word-break: break-word;
 }
@@ -206,29 +277,29 @@ tbody td a:hover {
 }
 
 .trigger-auto {
-  background: #e6f4ea;
-  color: #1a8a3d;
+  background: var(--badge-auto-bg);
+  color: var(--badge-auto-text);
 }
 
 .trigger-manual {
-  background: #fff4e5;
-  color: #b35c00;
+  background: var(--badge-manual-bg);
+  color: var(--badge-manual-text);
 }
 
 .count-badge {
   font-weight: 400;
-  color: #888;
+  color: var(--text-tertiary);
   font-size: 13px;
 }
 
 .empty-state {
-  color: #888;
+  color: var(--text-tertiary);
   font-size: 13px;
   padding: 14px 4px;
 }
 
 footer {
   font-size: 11px;
-  color: #999;
+  color: var(--footer-text);
   line-height: 1.5;
 }

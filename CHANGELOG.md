@@ -3,11 +3,44 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0]
+
+### Changed
+- The icon glyph now fills more of its canvas: `gen_icons.py`'s crop
+  padding dropped from 6% to 2% (just enough to keep the toolbar rim from
+  clipping at the canvas edge), so the pinned toolbar icon reads larger.
+- The popup and options page now follow the OS/browser's light/dark
+  preference (`prefers-color-scheme`) instead of always rendering with a
+  white background. Both were rewritten to use CSS custom properties for
+  every color (background, text, borders, table, badges, buttons) with a
+  dark-mode override block, and verified by rendering both pages under
+  emulated light and dark color schemes. This is light/dark support, not
+  a reader of Chrome's arbitrary custom theme colors — there's no
+  extension API for the latter.
+
+### Changed
+- Icon background is now transparent instead of opaque black. Removed via
+  border flood-fill (not a flat color-key) so enclosed dark shading in the
+  artwork is preserved, with a feathered edge instead of a hard cutout.
+- Icons are now tight-cropped to the artwork's bounding box before being
+  re-padded to a square canvas, so the glyph fills more of the icon at
+  every size (previously there was excess transparent/black margin).
+- Added a soft light rim just outside the icon's silhouette, sized per
+  icon. This exists specifically for toolbar-pin visibility: the
+  artwork's face is a solid dark fill, which read fine on Chrome's light
+  theme but nearly disappeared on its dark theme with no defined edge.
+  The rim is white at partial opacity, so it's essentially invisible when
+  composited over a light/white toolbar and only shows up as an outline
+  on a dark one.
+- `gen_icons.py` now performs all of the above as a documented, re-runnable
+  pipeline; added `requirements-dev.txt` (Pillow, scipy) since background
+  removal needs scipy in addition to Pillow.
+
 ## [1.2.0]
 
 ### Added
-- Detects and removes enforcement dialog/overlay (`hideAdblockWarning` setting, 
-  default on).
+- Detects and removes YouTube's "Ad blockers are not allowed on YouTube"
+  enforcement dialog/overlay (`hideAdblockWarning` setting, default on).
 - If playback is left paused/stuck after the dialog is removed, reloads the
   page to recover it (`autoReloadOnBlock` setting, default on), preserving
   the current playback position via the `t=` URL parameter and capped at 2
