@@ -64,18 +64,28 @@
   ];
 
   // Known containers YouTube has used for the "ad blockers are not allowed"
-  // enforcement dialog/error screen. These drift over time, so
-  // findAdblockWarningElement() also falls back to a text-content scan.
-  const ADBLOCK_WARNING_SELECTORS = [
+  // enforcement dialog/error screen, plus generic dialog/popup containers
+  // as a fallback for when YouTube renames things. IMPORTANT: none of
+  // these are matched on their own - see findAdblockWarningElement().
+  // 'ytd-popup-container' and 'tp-yt-paper-dialog' in particular are
+  // YouTube's *generic* popup/dialog containers, used for all sorts of
+  // unrelated dialogs (cookie/consent prompts, sign-in nudges, "continue
+  // watching?", etc.) - matching those by tag name alone previously
+  // caused this extension to delete an unrelated first-visit dialog and
+  // then reload the page thinking it had hit an ad-block block, which
+  // could repeat indefinitely. Every candidate here must also match
+  // ADBLOCK_WARNING_TEXT_PATTERN before being treated as the warning.
+  const ADBLOCK_WARNING_CANDIDATE_SELECTOR = [
     'ytd-enforcement-message-view-model',
     'yt-playability-error-supported-renderers',
-    'ytd-popup-container tp-yt-paper-dialog',
-  ];
+    'tp-yt-paper-dialog',
+    'ytd-popup-container',
+    '[role="dialog"]',
+  ].join(', ');
 
-  // Phrases YouTube's enforcement dialog is known to use. Matched against
-  // element text as a fallback when the selectors above miss (e.g. after a
-  // YouTube markup change), and used defensively so we don't remove some
-  // unrelated dialog that happens to match a class name.
+  // Phrases YouTube's enforcement dialog is known to use. Every candidate
+  // element found above must match this before we treat it as the
+  // ad-block warning - this is what keeps unrelated dialogs safe.
   const ADBLOCK_WARNING_TEXT_PATTERN =
     /ad ?blockers? (are|is) not allowed|please (disable|turn off) (your )?ad ?blocker|allow youtube ads/i;
 
@@ -139,6 +149,8 @@
       if (v) return v;
       const shortsMatch = url.pathname.match(/\/shorts\/([^/?]+)/);
       if (shortsMatch) return shortsMatch[1];
+      const embedMatch = url.pathname.match(/\/embed\/([^/?]+)/);
+      if (embedMatch) return embedMatch[1];
     } catch (e) {
       // ignore
     }
@@ -208,16 +220,7 @@
   }
 
   function findAdblockWarningElement() {
-    for (const sel of ADBLOCK_WARNING_SELECTORS) {
-      const el = document.querySelector(sel);
-      if (el) return el;
-    }
-
-    // Fallback: scan dialog-like elements for known warning phrasing, in
-    // case YouTube renamed the containers above.
-    const candidates = document.querySelectorAll(
-      'tp-yt-paper-dialog, ytd-popup-container, [role="dialog"], ytd-enforcement-message-view-model'
-    );
+    const candidates = document.querySelectorAll(ADBLOCK_WARNING_CANDIDATE_SELECTOR);
     for (const el of candidates) {
       if (ADBLOCK_WARNING_TEXT_PATTERN.test(el.textContent || '')) {
         return el;
@@ -257,16 +260,21 @@
   // video (tracked in sessionStorage, which survives the reload) to avoid
   // looping forever if YouTube re-triggers the block immediately again,
   // and preserves the current playback position via the `t=` parameter.
+  //
+  // The key always resolves to something real (falls back to the page
+  // path when there's no video ID) specifically so the cap can never be
+  // silently skipped - an earlier version used a null key in that case,
+  // which always read back a count of 0 and reloaded without limit.
   function reloadToRecoverPlayback() {
     const videoId = getVideoId();
-    const key = videoId ? `ytAdSkipperReloadCount:${videoId}` : null;
-    const count = key ? Number(sessionStorage.getItem(key) || '0') : 0;
+    const key = `ytAdSkipperReloadCount:${videoId || location.pathname}`;
+    const count = Number(sessionStorage.getItem(key) || '0');
 
     if (count >= MAX_AUTO_RELOADS_PER_VIDEO) {
       showToast('Still blocked — try reloading manually');
       return;
     }
-    if (key) sessionStorage.setItem(key, String(count + 1));
+    sessionStorage.setItem(key, String(count + 1));
 
     const video = getVideo();
     const seconds =
@@ -364,7 +372,13 @@
       if (!STATE.autoSkip) updateManualPrompt(false);
     }
 
-    if (STATE.hideAdblockWarning) {
+    // Only touch ad-block-warning handling on an actual watch/shorts/embed
+    // page (real player present AND a resolvable video ID) - never on the
+    // homepage, search, or channel pages, which have their own unrelated
+    // dialogs (cookie/consent prompts especially) that must never be
+    // mistaken for this.
+    const onWatchLikePage = Boolean(getPlayer() && getVideoId());
+    if (STATE.hideAdblockWarning && onWatchLikePage) {
       const removed = removeAdblockWarning();
       if (removed) {
         showToast('Removed YouTube ad-block warning');

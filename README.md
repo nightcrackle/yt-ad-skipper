@@ -75,21 +75,28 @@ that, if ignored, pauses the video and leaves it stuck. Two independent
 settings on the options page address this — **Behavior** is the ad-skip
 toggles above; these live under **Ad-block warning**:
 
-- **Remove the ad-block warning banner** (default on) — detects the
-  dialog/overlay (by known element names, falling back to a text-content
-  scan for phrases like "ad blockers are not allowed" so it's more likely
-  to survive a YouTube markup change) and removes it along with its modal
-  backdrop.
+- **Remove the ad-block warning banner** (default on) — only runs on an
+  actual watch/Shorts/embed page (a real video player present *and* a
+  resolvable video ID; never the homepage, search, or channel pages).
+  There, it detects the dialog/overlay by scanning candidate elements
+  (known element names, `tp-yt-paper-dialog`, `ytd-popup-container`,
+  `[role="dialog"]`) and requires each one's text to actually match
+  known warning phrasing (e.g. "ad blockers are not allowed") before
+  removing it — matching by tag/container name alone previously caused a
+  reload loop on first-time visits (see CHANGELOG 1.3.1), because
+  YouTube reuses those same generic containers for unrelated dialogs
+  like the cookie/consent prompt.
 - **Auto-reload if playback is stuck** (default on, requires the setting
   above) — if the video is still paused shortly after the banner is
   removed, reloads the page. Removing the dialog alone doesn't resume a
   video YouTube has already paused for this reason, so a reload is the
   practical fix. Your playback position is preserved via the `t=` URL
-  parameter, and this is capped at 2 auto-reload attempts per video
-  (tracked in `sessionStorage`, so it resets per tab/session) specifically
-  to avoid a reload loop if YouTube re-triggers the block immediately
-  again — past that cap it shows a toast telling you to reload manually
-  instead of retrying forever.
+  parameter, and this is capped at 2 auto-reload attempts (tracked in
+  `sessionStorage`, keyed by video ID — or the page path as a fallback
+  that keeps the cap in effect even without one, so it can never be
+  silently skipped) specifically to avoid a reload loop if YouTube
+  re-triggers the block immediately again — past that cap it shows a
+  toast telling you to reload manually instead of retrying forever.
 
 This is a more direct point of conflict with YouTube's own enforcement
 than ad-skipping is: skipping ads uses controls YouTube's player already
@@ -243,7 +250,7 @@ $ echo $?
 0
 ```
 
-Last run: 2026-08-28 10:40 UTC. This block is a static snapshot — it will go
+Last run: 2026-08-28 10:55 UTC. This block is a static snapshot — it will go
 stale as the code changes. Once pushed to GitHub, remove this section (or
 just point to it in the badge) and rely on the live Actions run instead.
 

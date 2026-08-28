@@ -3,6 +3,40 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.1]
+
+### Fixed
+- **Reload loop on first-time visits.** `ADBLOCK_WARNING_SELECTORS`
+  included `'ytd-popup-container tp-yt-paper-dialog'`, a purely
+  structural selector with no content check - it matched *any* dialog
+  YouTube shows in a popup container, including the cookie/consent
+  dialog many first-time visitors see on the homepage. That dialog got
+  deleted (not properly "accepted", so it could reappear), read as an
+  ad-block warning, and combined with an unrelated paused preview
+  `<video>` element (common on the homepage), triggered a reload. The
+  reload counter was keyed by video ID, which is `null` on non-watch
+  pages, and the code silently skipped its own cap in that case
+  (`count` always read back as `0`) - so the reload had no limit and the
+  page kept reloading indefinitely.
+- Three independent fixes, kept independent on purpose so no single
+  remaining gap reopens the loop:
+  - `findAdblockWarningElement()` now requires every candidate (however
+    it was found) to match `ADBLOCK_WARNING_TEXT_PATTERN` before being
+    treated as the warning - a same-tag-name dialog with unrelated text
+    is never enough.
+  - Ad-block-warning handling (both detection and reload) now only runs
+    when there's an actual video player *and* a resolvable video ID
+    (watch, Shorts, or embed URL) - never on the homepage, search, or
+    channel pages. `getVideoId()` now also recognizes `/embed/` URLs.
+  - The reload-attempt counter's key can no longer be `null` (falls back
+    to the page path when there's no video ID), so the attempt cap
+    always applies, structurally, even in an unanticipated future
+    false-positive.
+- Verified with two headless-browser regression tests: a simulated
+  homepage with a generic consent dialog (must NOT be touched, confirmed
+  untouched) and a simulated watch page with the real warning text (must
+  still be detected and removed, confirmed working).
+
 ## [1.3.0]
 
 ### Changed
