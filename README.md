@@ -78,18 +78,25 @@ other and silently drop a log entry.
 
 YouTube can detect ad blockers (including the ad-skipping this extension
 does) and respond with an "Ad blockers are not allowed on YouTube"
-warning. It shows up in two different shapes, and this extension treats
-them differently:
+warning. It shows up in two different shapes, both handled the same way
+now (removed outright):
 
 - A **dismissible dialog**, wrapped in YouTube's generic popup/dialog
-  containers — this is just a modal over an otherwise-fine player, so
-  it's safe to delete outright.
-- A **harder in-player block**, where the same warning text is rendered
-  directly inside the player area itself (not wrapped in a dialog), and
-  the video is stopped or never starts — sometimes with no video element
-  present at all while it's showing. This one is *not* deleted (deleting
-  it risks eating real player structure instead of a disposable overlay);
-  it's detected and handled by the reload-recovery step below instead.
+  containers (`ytd-popup-container` / `tp-yt-paper-dialog`) — a modal
+  over an otherwise-fine player.
+- A **harder in-player block** (`#error-screen`), where the warning
+  renders directly inside the player area itself instead of a dialog, and
+  the video is stopped or never starts. This is YouTube's real element for
+  this — confirmed against actively maintained open-source ad-block-
+  warning removers, not guessed at — and it was missing from this
+  extension's detection entirely before v1.3.3, so this shape was never
+  actually removed in any earlier version; it would just sit there.
+
+Neither is the player's own `<video>` element or a wrapper around it —
+they're overlay/error UI alongside it — so removing them outright is
+safe. As a zero-cost structural safety net, removal is skipped (detection
+still happens, so recovery still runs) if a match is ever found to
+unexpectedly contain a `<video>` element.
 
 Two independent settings on the options page address this — **Behavior**
 is the ad-skip toggles above; these live under **Ad-block warning**:
@@ -97,33 +104,35 @@ is the ad-skip toggles above; these live under **Ad-block warning**:
 - **Remove the ad-block warning banner** (default on) — only runs on an
   actual watch/Shorts/embed page (a real video player present *and* a
   resolvable video ID; never the homepage, search, or channel pages).
-  There, it detects the warning by scanning candidate elements (known
-  element names, `tp-yt-paper-dialog`, `ytd-popup-container`,
-  `[role="dialog"]`) and requires each one's text to actually match known
-  warning phrasing (e.g. "ad blockers are not allowed") before treating it
-  as real — matching by tag/container name alone previously caused a
-  reload loop on first-time visits (see CHANGELOG 1.3.1), because YouTube
-  reuses those same generic containers for unrelated dialogs like the
-  cookie/consent prompt. Only the dismissible-dialog shape above is
-  actually removed from the page; the in-player shape is left alone.
+  Elements specific to this warning (`ytd-enforcement-message-view-model`,
+  `yt-playability-error-supported-renderers`, `#error-screen`) are trusted
+  by presence alone; YouTube's *generic* dialog containers
+  (`tp-yt-paper-dialog`, `ytd-popup-container`, `[role="dialog"]`) also
+  require the element's text to actually match known warning phrasing
+  (e.g. "ad blockers are not allowed") before being treated as real —
+  matching those by tag/container name alone previously caused a reload
+  loop on first-time visits (see CHANGELOG 1.3.1), because YouTube reuses
+  those same generic containers for unrelated dialogs like the
+  cookie/consent prompt.
 - **Auto-reload if playback is stuck** (default on, requires the setting
-  above) — if the video is missing or still paused shortly after the
-  warning is detected, reloads the page. Removing (or merely detecting)
-  the warning doesn't by itself resume a video YouTube has already
-  stopped for this reason, so a reload is the practical fix. Your
-  playback position is preserved via the `t=` URL parameter, and this is
-  capped at 2 auto-reload attempts (tracked in `sessionStorage`, keyed by
-  video ID — or the page path as a fallback that keeps the cap in effect
-  even without one, so it can never be silently skipped) specifically to
-  avoid a reload loop if YouTube re-triggers the block immediately again.
-  Past that cap, auto-reloading stops — at that point YouTube re-blocking
-  every single reload most likely means a real ad blocker is still active
-  elsewhere in your browser (this extension doesn't block ad requests, so
-  it can't fix that) rather than a one-off glitch — but a persistent
-  **"⟳ Playback blocked — click to reload"** button is left on the player
-  itself so you're never just stuck looking at a dead, unclickable video
-  area with nothing to do about it; it disappears once playback is
-  actually confirmed to have resumed.
+  above) — once the warning is handled, first tries a plain `video.play()`
+  to resume playback with no reload or flicker at all (YouTube's
+  enforcement very often just leaves an otherwise-working video paused
+  rather than actually broken). Only if that doesn't actually result in
+  playback resuming shortly after does it reload the page, preserving your
+  playback position via the `t=` URL parameter, capped at 2 auto-reload
+  attempts (tracked in `sessionStorage`, keyed by video ID — or the page
+  path as a fallback that keeps the cap in effect even without one, so it
+  can never be silently skipped) specifically to avoid a reload loop if
+  YouTube re-triggers the block immediately again. Past that cap,
+  auto-reloading stops — at that point YouTube re-blocking every single
+  reload most likely means a real ad blocker is still active elsewhere in
+  your browser (this extension doesn't block ad requests, so it can't fix
+  that) rather than a one-off glitch — but a persistent **"⟳ Playback
+  blocked — click to reload"** button is left on the player itself so
+  you're never just stuck looking at a dead, unclickable video area with
+  nothing to do about it; it disappears once playback is actually
+  confirmed to have resumed.
 
 This is a more direct point of conflict with YouTube's own enforcement
 than ad-skipping is: skipping ads uses controls YouTube's player already
@@ -146,7 +155,8 @@ page.
   extension can act.
 - If YouTube changes its player's HTML/class structure, the selectors in
   `content.js` (`SKIP_BUTTON_SELECTORS`, `ad-showing`/`ad-interrupting`,
-  `ADBLOCK_WARNING_SELECTORS`) may need to be updated to match.
+  `ADBLOCK_SPECIFIC_SELECTOR`, `ADBLOCK_GENERIC_DIALOG_SELECTOR`) may need
+  to be updated to match.
 - The ad-block warning dialog is a moving target even more than the skip
   button is — YouTube actively iterates on this specific mechanism, so
   expect the selectors/text-matching in `content.js` to need updates over
@@ -278,7 +288,7 @@ $ echo $?
 0
 ```
 
-Last run: 2026-08-29 11:30 UTC. This block is a static snapshot — it will go
+Last run: 2026-08-29 11:46 UTC. This block is a static snapshot — it will go
 stale as the code changes. Once pushed to GitHub, remove this section (or
 just point to it in the badge) and rely on the live Actions run instead.
 

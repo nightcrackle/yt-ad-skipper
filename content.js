@@ -26,29 +26,40 @@
  * updating.
  *
  * Separately, this also reacts to YouTube's ad-blocker *enforcement* UI.
- * YouTube shows this in (at least) two different shapes:
+ * YouTube shows this in (at least) two different shapes, both handled the
+ * same way now (removed outright - see removeAdblockWarning()):
  *   1. A dismissible dialog ("Ad blockers are not allowed on YouTube"),
- *      wrapped in its generic popup/dialog containers. This one is safe
- *      to delete outright - it's genuinely just a modal on top of a
- *      player that's fine underneath.
- *   2. A harder in-player block, where the same kind of warning text is
- *      rendered directly inside the player area itself (not wrapped in a
- *      dialog container) and the video is stopped or never starts. We do
- *      NOT delete that variant's element - it isn't a disposable overlay,
- *      and deleting it risks eating real player structure. Instead we
- *      detect it and go straight to the recovery step below.
- * In both cases, if the video is left missing/paused/stuck, the page is
- * reloaded once or twice (capped, to avoid a reload loop), preserving
- * your playback position via the `t=` URL parameter. If the cap is hit
- * and the block is still there, auto-reloading stops (it's more likely a
- * real, still-active ad blocker elsewhere in the browser than a one-off
- * glitch at that point) but a persistent, clickable "reload" button is
- * left on the player - a fading toast alone would leave a genuinely dead,
- * unclickable player area with no visible way to recover.
- * Both are independently toggleable in settings. This is a more direct
- * point of conflict with YouTube's own enforcement than ad-skipping is,
- * it depends on YouTube's current markup/text just like the skip logic
- * above, and YouTube can change or strengthen this mechanism at any time.
+ *      wrapped in its generic popup/dialog containers
+ *      (`ytd-popup-container` / `tp-yt-paper-dialog`).
+ *   2. A harder in-player block (`#error-screen`), where the warning
+ *      renders directly inside the player area itself instead of a
+ *      dialog, and the video is stopped or never starts. This selector
+ *      was missing entirely before v1.3.3, so this variant was never
+ *      actually detected or removed in any earlier version - it would
+ *      just sit there indefinitely.
+ * Neither is the player's own `<video>` element or a wrapper around it -
+ * they're overlay/error UI alongside it - so removing them outright is
+ * safe; as a structural safety net, removal is skipped (detection still
+ * happens) if a match is ever found to unexpectedly contain a `<video>`.
+ *
+ * Removing the warning doesn't by itself resume a video YouTube has
+ * already stopped. The recovery step tries the light fix first - a plain
+ * `video.play()`, since YouTube's enforcement very often just leaves an
+ * otherwise-working video paused rather than actually broken - and only
+ * falls back to reloading the page (preserving playback position via the
+ * `t=` URL parameter) if that doesn't result in playback actually
+ * resuming. Reloading is capped at 2 attempts per video to avoid a reload
+ * loop if YouTube re-triggers the block immediately again; past that cap,
+ * auto-reloading stops (more likely a real, still-active ad blocker
+ * elsewhere in the browser at that point than a one-off glitch) but a
+ * persistent, clickable "reload" button is left on the player - a fading
+ * toast alone would leave a genuinely dead, unclickable player area with
+ * no visible way to recover.
+ * Both warning-removal and auto-reload are independently toggleable in
+ * settings. This is a more direct point of conflict with YouTube's own
+ * enforcement than ad-skipping is, it depends on YouTube's current
+ * markup/text just like the skip logic above, and YouTube can change or
+ * strengthen this mechanism at any time.
  */
 
 (() => {
@@ -76,29 +87,41 @@
     '.ytp-ad-overlay-close-icon',
   ];
 
-  // Known containers YouTube has used for the "ad blockers are not allowed"
-  // enforcement dialog/error screen, plus generic dialog/popup containers
-  // as a fallback for when YouTube renames things. IMPORTANT: none of
-  // these are matched on their own - see findAdblockWarningElement().
-  // 'ytd-popup-container' and 'tp-yt-paper-dialog' in particular are
-  // YouTube's *generic* popup/dialog containers, used for all sorts of
-  // unrelated dialogs (cookie/consent prompts, sign-in nudges, "continue
-  // watching?", etc.) - matching those by tag name alone previously
-  // caused this extension to delete an unrelated first-visit dialog and
-  // then reload the page thinking it had hit an ad-block block, which
-  // could repeat indefinitely. Every candidate here must also match
-  // ADBLOCK_WARNING_TEXT_PATTERN before being treated as the warning.
-  const ADBLOCK_WARNING_CANDIDATE_SELECTOR = [
+  // Elements YouTube uses *specifically and only* for its ad-block
+  // enforcement UI - confirmed against real-world open-source removers
+  // (not just guessed at) - so their mere presence is trusted without
+  // also requiring a text match:
+  //   - 'ytd-enforcement-message-view-model' - the warning's message
+  //     content, inside the dismissible dialog.
+  //   - 'yt-playability-error-supported-renderers' - a fallback host
+  //     element used when the main player container isn't found.
+  //   - '#error-screen' - the harder in-player block: YouTube replaces
+  //     the video area with this instead of a dismissible dialog, and it
+  //     was missing from this list entirely before v1.3.3 - meaning that
+  //     variant was never actually detected or removed, in any version.
+  const ADBLOCK_SPECIFIC_SELECTOR = [
     'ytd-enforcement-message-view-model',
     'yt-playability-error-supported-renderers',
+    '#error-screen',
+  ].join(', ');
+
+  // YouTube's *generic* popup/dialog containers - reused for lots of
+  // unrelated things (cookie/consent prompts, sign-in nudges, "continue
+  // watching?", etc.), so matching these by tag name alone previously
+  // caused this extension to delete an unrelated first-visit dialog and
+  // then reload the page thinking it had hit an ad-block block, which
+  // repeated indefinitely (see CHANGELOG 1.3.1). Every candidate here
+  // must also match ADBLOCK_WARNING_TEXT_PATTERN before being treated as
+  // the warning - unlike the specific selectors above.
+  const ADBLOCK_GENERIC_DIALOG_SELECTOR = [
     'tp-yt-paper-dialog',
     'ytd-popup-container',
     '[role="dialog"]',
   ].join(', ');
 
-  // Phrases YouTube's enforcement dialog is known to use. Every candidate
-  // element found above must match this before we treat it as the
-  // ad-block warning - this is what keeps unrelated dialogs safe.
+  // Phrases YouTube's enforcement dialog is known to use. Only required
+  // for matches from ADBLOCK_GENERIC_DIALOG_SELECTOR above - this is what
+  // keeps unrelated generic dialogs safe.
   const ADBLOCK_WARNING_TEXT_PATTERN =
     /ad ?blockers? (are|is) not allowed|please (disable|turn off) (your )?ad ?blocker|allow youtube ads/i;
 
@@ -233,8 +256,15 @@
   }
 
   function findAdblockWarningElement() {
-    const candidates = document.querySelectorAll(ADBLOCK_WARNING_CANDIDATE_SELECTOR);
-    for (const el of candidates) {
+    // Specific selectors are trusted by presence alone - see the comment
+    // on ADBLOCK_SPECIFIC_SELECTOR for why.
+    const specific = document.querySelector(ADBLOCK_SPECIFIC_SELECTOR);
+    if (specific) return specific;
+
+    // Generic containers require a text match, since YouTube reuses them
+    // for unrelated dialogs too.
+    const genericCandidates = document.querySelectorAll(ADBLOCK_GENERIC_DIALOG_SELECTOR);
+    for (const el of genericCandidates) {
       if (ADBLOCK_WARNING_TEXT_PATTERN.test(el.textContent || '')) {
         return el;
       }
@@ -242,39 +272,42 @@
     return null;
   }
 
-  // Detects the "ad blockers are not allowed" warning and, only when it's
-  // a genuine dismissible dialog, removes it (plus any leftover modal
-  // backdrop). Returns { detected, removedModal }:
-  //   - detected: a matching warning element was found at all, whichever
-  //     shape it was in.
-  //   - removedModal: it was wrapped in a real dialog/popup container and
-  //     that container was deleted.
-  // When detected is true but removedModal is false, the warning is the
-  // in-player block variant (see file header) - its element is left in
-  // the DOM untouched, and the caller falls through to the reload-recovery
-  // step instead of trying to delete player-area content.
+  // Detects the "ad blockers are not allowed" warning and removes it (its
+  // dialog wrapper if it's the dismissible modal shape, plus any leftover
+  // modal backdrop; the element itself directly for the in-player
+  // '#error-screen' shape - real-world open-source ad-block-warning
+  // removers do exactly this and it's safe, since none of these elements
+  // are the player's own <video> or a wrapper around it, they're
+  // overlay/error UI alongside it). Returns { detected, removed }:
+  //   - detected: a matching warning element was found at all.
+  //   - removed: it was actually deleted from the page.
+  // The one case detected can be true while removed is false is the
+  // structural safety check below - if a match ever unexpectedly turns
+  // out to contain our own player's <video> element, it's left alone
+  // rather than risking taking the video down with it, and the caller
+  // still falls through to the reload-recovery step.
   function removeAdblockWarning() {
     const warningEl = findAdblockWarningElement();
-    if (!warningEl) return { detected: false, removedModal: false };
+    if (!warningEl) return { detected: false, removed: false };
+
+    if (warningEl.querySelector('video')) {
+      return { detected: true, removed: false };
+    }
 
     const modalContainer =
       warningEl.closest('ytd-popup-container') || warningEl.closest('tp-yt-paper-dialog');
+    const toRemove = modalContainer || warningEl;
+    toRemove.remove();
 
-    if (!modalContainer) {
-      return { detected: true, removedModal: false };
-    }
-
-    modalContainer.remove();
-
-    // The dialog usually comes with a dark modal backdrop that blocks
-    // clicks on the rest of the page; clear that out too.
+    // The dismissible dialog usually comes with a dark modal backdrop
+    // that blocks clicks on the rest of the page; clear that out too.
     document
       .querySelectorAll('tp-yt-iron-overlay-backdrop, .ytd-popup-container[opened], #dialog[opened]')
       .forEach((el) => el.remove());
     document.documentElement.style.overflow = '';
     document.body.style.overflow = '';
 
-    return { detected: true, removedModal: true };
+    return { detected: true, removed: true };
   }
 
   function buildReloadTarget() {
@@ -323,13 +356,14 @@
     if (btn) btn.remove();
   }
 
-  // Removing (or, for the in-player variant, merely detecting) the
-  // warning doesn't by itself resume a video YouTube has already stopped
-  // for this reason. The reliable fix is reloading the page, so this
-  // reloads at most MAX_AUTO_RELOADS_PER_VIDEO times per video (tracked
-  // in sessionStorage, which survives the reload) to avoid looping
-  // forever if YouTube re-triggers the block immediately again, and
-  // preserves the current playback position via the `t=` parameter.
+  // This is the fallback once a plain video.play() (tried by the caller
+  // in tick()) hasn't resumed playback shortly after the warning was
+  // handled - either it wasn't a simple pause, or there was no <video>
+  // element to play at all. Reloading the page is the more forceful fix,
+  // so this reloads at most MAX_AUTO_RELOADS_PER_VIDEO times per video
+  // (tracked in sessionStorage, which survives the reload) to avoid
+  // looping forever if YouTube re-triggers the block immediately again,
+  // and preserves the current playback position via the `t=` parameter.
   //
   // The key always resolves to something real (falls back to the page
   // path when there's no video ID) specifically so the cap can never be
@@ -445,30 +479,47 @@
     const onWatchLikePage = Boolean(getPlayer() && getVideoId());
     if (STATE.hideAdblockWarning && onWatchLikePage) {
       const result = removeAdblockWarning();
-      if (result.removedModal) {
+      if (result.removed) {
         showToast('Removed YouTube ad-block warning');
       }
       if (result.detected && STATE.autoReloadOnBlock && !STATE.recoveryCheckPending) {
-        // Only ever have one recovery check in flight. Without this, the
-        // in-player warning variant (which we deliberately don't delete,
-        // see removeAdblockWarning()) would still match on every 300ms
-        // tick and each one would schedule its own check, stacking up
-        // several reload attempts - and burning through the reload cap -
-        // before the first reload even navigates away.
+        // Only ever have one recovery check in flight. Without this, a
+        // warning that keeps re-matching tick after tick (e.g. the
+        // structural-safety case where we deliberately didn't remove it)
+        // would schedule its own check every 300ms, stacking up several
+        // reload attempts - and burning through the reload cap - before
+        // the first one even navigates away.
         STATE.recoveryCheckPending = true;
         // Give YouTube's own pause a moment to actually apply before
         // checking whether playback is stuck.
         setTimeout(() => {
-          STATE.recoveryCheckPending = false;
           const video = getVideo();
-          // A missing video element counts as stuck too, not just a
-          // paused one - the in-player block variant can leave the
-          // player with no <video> at all once its warning text is the
-          // only thing on screen, and that's just as unrecoverable
-          // without a reload as a paused one.
-          if (!video || video.paused) {
+          if (!video) {
+            STATE.recoveryCheckPending = false;
             reloadToRecoverPlayback();
+            return;
           }
+          if (!video.paused) {
+            STATE.recoveryCheckPending = false;
+            return;
+          }
+          // Try the light fix first: YouTube's own enforcement very often
+          // just leaves an otherwise-working video paused once the
+          // warning is gone (rather than broken/unloaded) - a plain
+          // video.play() resumes it instantly, with no reload/flicker
+          // needed. Only fall back to a full page reload if that doesn't
+          // actually result in playback resuming shortly after.
+          const playAttempt = video.play();
+          if (playAttempt && typeof playAttempt.catch === 'function') {
+            playAttempt.catch(() => {});
+          }
+          setTimeout(() => {
+            STATE.recoveryCheckPending = false;
+            const v = getVideo();
+            if (!v || v.paused) {
+              reloadToRecoverPlayback();
+            }
+          }, 500);
         }, 800);
       }
 

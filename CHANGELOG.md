@@ -3,6 +3,54 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.3]
+
+### Fixed
+- **The ad-block warning banner was showing up and staying up again.**
+  Root cause: `#error-screen` - YouTube's actual, real element for the
+  harder in-player block - was never in the detection selector list at
+  all, in any released version. The selector this extension previously
+  used for that variant (`yt-playability-error-supported-renderers`) was
+  a secondary/fallback element, not YouTube's primary one; `#error-screen`
+  is the one that actually shows up in the wild, and it was silently never
+  detected, so it was never removed. Confirmed against real, actively
+  maintained open-source YouTube ad-block-warning removers, not just
+  re-guessed. `#error-screen` is now in the candidate list.
+- Split detection into two tiers: `ytd-enforcement-message-view-model`,
+  `yt-playability-error-supported-renderers`, and `#error-screen` are
+  specific to this warning and never reused for anything else, so their
+  presence alone is now trusted (no text match required) - this also
+  removes a failure mode where a wording change could have silently
+  broken detection even once the selector was right. The generic
+  `tp-yt-paper-dialog` / `ytd-popup-container` / `[role="dialog"]`
+  containers, which YouTube does reuse for unrelated dialogs, still
+  require a text match before being treated as the warning, exactly as
+  before (see CHANGELOG 1.3.1) - this tiering doesn't reopen that bug.
+- `removeAdblockWarning()` now actually deletes the in-player
+  `#error-screen` / `yt-playability-error-supported-renderers` element too
+  (previously 1.3.2 deliberately left these in the DOM out of caution).
+  Real-world removers do exactly this safely, since neither is the
+  player's `<video>` element or a wrapper around it - they're overlay/error
+  UI alongside it. A structural safety check (skip removal, but still
+  report detection, if a match is ever found to contain a `<video>`) is
+  kept as a zero-cost guard against that specific risk rather than
+  avoiding removal altogether.
+- **Lighter recovery, tried first:** instead of jumping straight to a page
+  reload, the recovery step now tries a plain `video.play()` first once
+  the warning is handled - YouTube's enforcement very often just leaves an
+  otherwise-working video paused rather than actually broken, and this
+  resumes it instantly with no reload/flicker. Reloading (still capped at
+  2 attempts, still falls back to the persistent on-player recovery button
+  past that cap - see CHANGELOG 1.3.2) only happens if `video.play()`
+  doesn't actually result in playback resuming shortly after.
+- Verified with two new headless-browser regression tests targeting
+  `#error-screen` specifically: one where the video is present and
+  recoverable with just `video.play()` (confirmed: warning removed, no
+  reload at all), and one with no video present (confirmed: falls through
+  to reload, same as the existing in-player-block coverage) - plus the
+  full existing suite (5 more scenarios) re-verified against this change,
+  including a real click-through test on the recovery button.
+
 ## [1.3.2]
 
 ### Fixed
