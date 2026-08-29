@@ -3,6 +3,52 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.2]
+
+### Fixed
+- **Playback stuck on a blank, unclickable black screen with no reload.**
+  YouTube shows its ad-block enforcement in two different shapes, and the
+  code only handled one of them correctly:
+  - A dismissible dialog, wrapped in `ytd-popup-container` /
+    `tp-yt-paper-dialog` - safe to delete outright.
+  - A harder in-player block, where the same warning text renders
+    directly inside the player itself (not wrapped in a dialog), often
+    with no `<video>` element present at all while it's showing.
+  `removeAdblockWarning()` didn't distinguish these - it deleted whatever
+  matched, including the in-player variant. If that also meant the
+  player's `<video>` element was gone, the reload-recovery check
+  (`video && video.paused`) silently found no video, never called
+  `reloadToRecoverPlayback()`, and nothing happened: no reload, no toast,
+  no recovery, just a dead player area.
+- `removeAdblockWarning()` now only deletes the element when it's
+  genuinely wrapped in a dismissible dialog/popup container, and instead
+  reports detection separately from removal so the recovery flow below
+  still runs either way; the recovery check itself now treats a missing
+  `<video>` element as stuck too, not only a paused one.
+- **No visible way to recover once the reload cap was hit.** Auto-reload
+  is intentionally capped (`MAX_AUTO_RELOADS_PER_VIDEO`) so a persistent
+  block can't loop forever - but hitting the cap only showed a 1.5s toast
+  and then gave up completely, leaving the exact same dead, unclickable
+  player area with nothing on screen to fix it. A persistent "⟳ Playback
+  blocked - click to reload" button is now shown on the player itself
+  whenever auto-reload gives up, so there's always something to click; it
+  triggers an immediate manual reload and clears itself once playback is
+  confirmed to have actually resumed.
+- Recovery checks are now debounced to at most one in flight at a time -
+  needed because the in-player warning variant is deliberately left in
+  the DOM (see above) and would otherwise still match on every 300ms tick,
+  each one scheduling its own recovery check and burning through the
+  reload cap in under a second, before the first reload even navigated.
+- Verified with five headless-browser regression tests covering: the
+  existing homepage/real-warning cases, an in-player block with no
+  `<video>` element (previously: zero reload attempts, completely stuck -
+  now: reloads up to the cap, then shows the recovery button), a
+  pre-exhausted reload cap (previously: no recovery button at all - now:
+  button shown), and a self-recovering case where playback resumes on its
+  own without our help (must not reload, must not show a stray button) -
+  plus a click-through test confirming the recovery button actually
+  triggers a fresh page load.
+
 ## [1.3.1]
 
 ### Fixed

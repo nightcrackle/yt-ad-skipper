@@ -17,6 +17,29 @@
   background: rgba(0, 0, 0, 1);
 }
 
+#yt-ad-skipper-reload-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2147483647;
+  background: rgba(20, 20, 20, 0.92);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 6px;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: Roboto, Arial, sans-serif;
+  cursor: pointer;
+  text-align: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+
+#yt-ad-skipper-reload-btn:hover {
+  background: rgba(40, 40, 40, 1);
+}
+
 #yt-ad-skipper-toast {
   position: fixed;
   top: 16px;

@@ -25,14 +25,26 @@
  * player's class names or DOM structure, the selectors below may need
  * updating.
  *
- * Separately, this also reacts to YouTube's ad-blocker *enforcement* UI
- * (the "Ad blockers are not allowed on YouTube" dialog, and the playback
- * block that follows if it's ignored):
- *   1. When the dialog/overlay is detected, it's removed from the page.
- *   2. If the video is left paused/stuck afterward, the page is reloaded
- *      once or twice (capped, to avoid a reload loop), preserving your
- *      playback position via the `t=` URL parameter, since removing the
- *      dialog alone doesn't resume a player YouTube has already paused.
+ * Separately, this also reacts to YouTube's ad-blocker *enforcement* UI.
+ * YouTube shows this in (at least) two different shapes:
+ *   1. A dismissible dialog ("Ad blockers are not allowed on YouTube"),
+ *      wrapped in its generic popup/dialog containers. This one is safe
+ *      to delete outright - it's genuinely just a modal on top of a
+ *      player that's fine underneath.
+ *   2. A harder in-player block, where the same kind of warning text is
+ *      rendered directly inside the player area itself (not wrapped in a
+ *      dialog container) and the video is stopped or never starts. We do
+ *      NOT delete that variant's element - it isn't a disposable overlay,
+ *      and deleting it risks eating real player structure. Instead we
+ *      detect it and go straight to the recovery step below.
+ * In both cases, if the video is left missing/paused/stuck, the page is
+ * reloaded once or twice (capped, to avoid a reload loop), preserving
+ * your playback position via the `t=` URL parameter. If the cap is hit
+ * and the block is still there, auto-reloading stops (it's more likely a
+ * real, still-active ad blocker elsewhere in the browser than a one-off
+ * glitch at that point) but a persistent, clickable "reload" button is
+ * left on the player - a fading toast alone would leave a genuinely dead,
+ * unclickable player area with no visible way to recover.
  * Both are independently toggleable in settings. This is a more direct
  * point of conflict with YouTube's own enforcement than ad-skipping is,
  * it depends on YouTube's current markup/text just like the skip logic
@@ -48,6 +60,7 @@
     wasMutedByUs: false,
     sessionSkipCount: 0,
     lastAdKey: null,
+    recoveryCheckPending: false,
   };
 
   const SKIP_BUTTON_SELECTORS = [
@@ -229,18 +242,29 @@
     return null;
   }
 
-  // Removes the "ad blockers are not allowed" dialog/error screen (banner
-  // #1 in the feature description) and any leftover modal backdrop it
-  // leaves behind. Returns true if something was found and removed.
+  // Detects the "ad blockers are not allowed" warning and, only when it's
+  // a genuine dismissible dialog, removes it (plus any leftover modal
+  // backdrop). Returns { detected, removedModal }:
+  //   - detected: a matching warning element was found at all, whichever
+  //     shape it was in.
+  //   - removedModal: it was wrapped in a real dialog/popup container and
+  //     that container was deleted.
+  // When detected is true but removedModal is false, the warning is the
+  // in-player block variant (see file header) - its element is left in
+  // the DOM untouched, and the caller falls through to the reload-recovery
+  // step instead of trying to delete player-area content.
   function removeAdblockWarning() {
     const warningEl = findAdblockWarningElement();
-    if (!warningEl) return false;
+    if (!warningEl) return { detected: false, removedModal: false };
 
-    const container =
-      warningEl.closest('ytd-popup-container') ||
-      warningEl.closest('tp-yt-paper-dialog') ||
-      warningEl;
-    container.remove();
+    const modalContainer =
+      warningEl.closest('ytd-popup-container') || warningEl.closest('tp-yt-paper-dialog');
+
+    if (!modalContainer) {
+      return { detected: true, removedModal: false };
+    }
+
+    modalContainer.remove();
 
     // The dialog usually comes with a dark modal backdrop that blocks
     // clicks on the rest of the page; clear that out too.
@@ -250,32 +274,10 @@
     document.documentElement.style.overflow = '';
     document.body.style.overflow = '';
 
-    return true;
+    return { detected: true, removedModal: true };
   }
 
-  // Removing the dialog doesn't by itself resume a video YouTube has
-  // already paused for this reason (banner #2 in the feature description:
-  // the block that stops the video). The reliable fix is reloading the
-  // page, so this reloads at most MAX_AUTO_RELOADS_PER_VIDEO times per
-  // video (tracked in sessionStorage, which survives the reload) to avoid
-  // looping forever if YouTube re-triggers the block immediately again,
-  // and preserves the current playback position via the `t=` parameter.
-  //
-  // The key always resolves to something real (falls back to the page
-  // path when there's no video ID) specifically so the cap can never be
-  // silently skipped - an earlier version used a null key in that case,
-  // which always read back a count of 0 and reloaded without limit.
-  function reloadToRecoverPlayback() {
-    const videoId = getVideoId();
-    const key = `ytAdSkipperReloadCount:${videoId || location.pathname}`;
-    const count = Number(sessionStorage.getItem(key) || '0');
-
-    if (count >= MAX_AUTO_RELOADS_PER_VIDEO) {
-      showToast('Still blocked — try reloading manually');
-      return;
-    }
-    sessionStorage.setItem(key, String(count + 1));
-
+  function buildReloadTarget() {
     const video = getVideo();
     const seconds =
       video && isFinite(video.currentTime) ? Math.max(0, Math.floor(video.currentTime)) : 0;
@@ -288,10 +290,73 @@
     } catch (e) {
       // fall back to reloading the current URL as-is
     }
+    return target;
+  }
+
+  // A persistent, clickable fallback for when auto-reload has given up
+  // (cap hit) or simply hasn't run yet. Unlike the toast, this doesn't
+  // disappear after 1.5s - it's what keeps a blocked player from ever
+  // being a dead end with nothing on screen to click.
+  function showStuckRecoveryButton() {
+    const player = getPlayer();
+    if (!player) return;
+    let btn = document.getElementById('yt-ad-skipper-reload-btn');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'yt-ad-skipper-reload-btn';
+      btn.type = 'button';
+      btn.textContent = '⟳ Playback blocked — click to reload';
+      btn.addEventListener('click', () => {
+        btn.remove();
+        showToast('Reloading…');
+        setTimeout(() => {
+          location.href = buildReloadTarget();
+        }, 300);
+      });
+      player.appendChild(btn);
+    }
+    btn.style.display = 'block';
+  }
+
+  function removeStuckRecoveryButton() {
+    const btn = document.getElementById('yt-ad-skipper-reload-btn');
+    if (btn) btn.remove();
+  }
+
+  // Removing (or, for the in-player variant, merely detecting) the
+  // warning doesn't by itself resume a video YouTube has already stopped
+  // for this reason. The reliable fix is reloading the page, so this
+  // reloads at most MAX_AUTO_RELOADS_PER_VIDEO times per video (tracked
+  // in sessionStorage, which survives the reload) to avoid looping
+  // forever if YouTube re-triggers the block immediately again, and
+  // preserves the current playback position via the `t=` parameter.
+  //
+  // The key always resolves to something real (falls back to the page
+  // path when there's no video ID) specifically so the cap can never be
+  // silently skipped - an earlier version used a null key in that case,
+  // which always read back a count of 0 and reloaded without limit.
+  //
+  // Once the cap is hit, this stops reloading on its own - if YouTube
+  // re-blocks every single reload, that's much more likely to mean a
+  // real ad blocker is still active elsewhere in the browser (this
+  // extension doesn't block ad requests, so it can't fix that) than a
+  // one-off glitch - but it always leaves a clickable recovery button
+  // behind so the user isn't just stuck looking at a dead player.
+  function reloadToRecoverPlayback() {
+    const videoId = getVideoId();
+    const key = `ytAdSkipperReloadCount:${videoId || location.pathname}`;
+    const count = Number(sessionStorage.getItem(key) || '0');
+
+    if (count >= MAX_AUTO_RELOADS_PER_VIDEO) {
+      showToast('Still blocked — click the button on the video to reload');
+      showStuckRecoveryButton();
+      return;
+    }
+    sessionStorage.setItem(key, String(count + 1));
 
     showToast('Ad-block warning detected — reloading…');
     setTimeout(() => {
-      location.href = target;
+      location.href = buildReloadTarget();
     }, 400);
   }
 
@@ -379,20 +444,51 @@
     // mistaken for this.
     const onWatchLikePage = Boolean(getPlayer() && getVideoId());
     if (STATE.hideAdblockWarning && onWatchLikePage) {
-      const removed = removeAdblockWarning();
-      if (removed) {
+      const result = removeAdblockWarning();
+      if (result.removedModal) {
         showToast('Removed YouTube ad-block warning');
-        if (STATE.autoReloadOnBlock) {
-          // Give YouTube's own pause a moment to actually apply before
-          // checking whether playback is stuck.
-          setTimeout(() => {
-            const video = getVideo();
-            if (video && video.paused) {
-              reloadToRecoverPlayback();
-            }
-          }, 800);
+      }
+      if (result.detected && STATE.autoReloadOnBlock && !STATE.recoveryCheckPending) {
+        // Only ever have one recovery check in flight. Without this, the
+        // in-player warning variant (which we deliberately don't delete,
+        // see removeAdblockWarning()) would still match on every 300ms
+        // tick and each one would schedule its own check, stacking up
+        // several reload attempts - and burning through the reload cap -
+        // before the first reload even navigates away.
+        STATE.recoveryCheckPending = true;
+        // Give YouTube's own pause a moment to actually apply before
+        // checking whether playback is stuck.
+        setTimeout(() => {
+          STATE.recoveryCheckPending = false;
+          const video = getVideo();
+          // A missing video element counts as stuck too, not just a
+          // paused one - the in-player block variant can leave the
+          // player with no <video> at all once its warning text is the
+          // only thing on screen, and that's just as unrecoverable
+          // without a reload as a paused one.
+          if (!video || video.paused) {
+            reloadToRecoverPlayback();
+          }
+        }, 800);
+      }
+
+      // Independent of whether the warning is still visibly present on
+      // *this* tick - it may already be gone, either because we just
+      // deleted the modal ourselves or because the in-player variant
+      // cleared on its own - a stuck-recovery button that's currently
+      // showing should only be cleared once the video is actually
+      // confirmed playing again. Clearing it just because "detected"
+      // happened to be false this tick would hide it the instant a
+      // removed modal makes the warning element disappear, even though
+      // the reload cap was hit and the underlying block was never fixed.
+      if (document.getElementById('yt-ad-skipper-reload-btn')) {
+        const video = getVideo();
+        if (video && !video.paused) {
+          removeStuckRecoveryButton();
         }
       }
+    } else {
+      removeStuckRecoveryButton();
     }
   }
 
@@ -417,6 +513,8 @@
   document.addEventListener('yt-navigate-finish', () => {
     observedPlayer = null;
     removeManualPrompt();
+    removeStuckRecoveryButton();
+    STATE.recoveryCheckPending = false;
     setTimeout(attachObserver, 500);
   });
 

@@ -1,7 +1,13 @@
 # YouTube Ad Skipper
 
 [![Validate extension](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml/badge.svg)](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml)
-[![License: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+> The CI badge above won't resolve until this repo is pushed to GitHub —
+> replace `nightcrackle/yt-ad-skipper` in the two URLs with your actual GitHub username/org
+> and repo name once it exists there. See [CI validation status](#ci-validation-status)
+> below for the actual last-run result in the meantime. The License badge is
+> a static badge (via shields.io) and works right away.
 
 A Chrome extension (Manifest V3) that skips YouTube video ads by detecting
 YouTube's own in-player ad state and driving the controls it already
@@ -71,33 +77,53 @@ other and silently drop a log entry.
 ## Ad-block warning handling
 
 YouTube can detect ad blockers (including the ad-skipping this extension
-does) and respond with an "Ad blockers are not allowed on YouTube" dialog
-that, if ignored, pauses the video and leaves it stuck. Two independent
-settings on the options page address this — **Behavior** is the ad-skip
-toggles above; these live under **Ad-block warning**:
+does) and respond with an "Ad blockers are not allowed on YouTube"
+warning. It shows up in two different shapes, and this extension treats
+them differently:
+
+- A **dismissible dialog**, wrapped in YouTube's generic popup/dialog
+  containers — this is just a modal over an otherwise-fine player, so
+  it's safe to delete outright.
+- A **harder in-player block**, where the same warning text is rendered
+  directly inside the player area itself (not wrapped in a dialog), and
+  the video is stopped or never starts — sometimes with no video element
+  present at all while it's showing. This one is *not* deleted (deleting
+  it risks eating real player structure instead of a disposable overlay);
+  it's detected and handled by the reload-recovery step below instead.
+
+Two independent settings on the options page address this — **Behavior**
+is the ad-skip toggles above; these live under **Ad-block warning**:
 
 - **Remove the ad-block warning banner** (default on) — only runs on an
   actual watch/Shorts/embed page (a real video player present *and* a
   resolvable video ID; never the homepage, search, or channel pages).
-  There, it detects the dialog/overlay by scanning candidate elements
-  (known element names, `tp-yt-paper-dialog`, `ytd-popup-container`,
-  `[role="dialog"]`) and requires each one's text to actually match
-  known warning phrasing (e.g. "ad blockers are not allowed") before
-  removing it — matching by tag/container name alone previously caused a
-  reload loop on first-time visits (see CHANGELOG 1.3.1), because
-  YouTube reuses those same generic containers for unrelated dialogs
-  like the cookie/consent prompt.
+  There, it detects the warning by scanning candidate elements (known
+  element names, `tp-yt-paper-dialog`, `ytd-popup-container`,
+  `[role="dialog"]`) and requires each one's text to actually match known
+  warning phrasing (e.g. "ad blockers are not allowed") before treating it
+  as real — matching by tag/container name alone previously caused a
+  reload loop on first-time visits (see CHANGELOG 1.3.1), because YouTube
+  reuses those same generic containers for unrelated dialogs like the
+  cookie/consent prompt. Only the dismissible-dialog shape above is
+  actually removed from the page; the in-player shape is left alone.
 - **Auto-reload if playback is stuck** (default on, requires the setting
-  above) — if the video is still paused shortly after the banner is
-  removed, reloads the page. Removing the dialog alone doesn't resume a
-  video YouTube has already paused for this reason, so a reload is the
-  practical fix. Your playback position is preserved via the `t=` URL
-  parameter, and this is capped at 2 auto-reload attempts (tracked in
-  `sessionStorage`, keyed by video ID — or the page path as a fallback
-  that keeps the cap in effect even without one, so it can never be
-  silently skipped) specifically to avoid a reload loop if YouTube
-  re-triggers the block immediately again — past that cap it shows a
-  toast telling you to reload manually instead of retrying forever.
+  above) — if the video is missing or still paused shortly after the
+  warning is detected, reloads the page. Removing (or merely detecting)
+  the warning doesn't by itself resume a video YouTube has already
+  stopped for this reason, so a reload is the practical fix. Your
+  playback position is preserved via the `t=` URL parameter, and this is
+  capped at 2 auto-reload attempts (tracked in `sessionStorage`, keyed by
+  video ID — or the page path as a fallback that keeps the cap in effect
+  even without one, so it can never be silently skipped) specifically to
+  avoid a reload loop if YouTube re-triggers the block immediately again.
+  Past that cap, auto-reloading stops — at that point YouTube re-blocking
+  every single reload most likely means a real ad blocker is still active
+  elsewhere in your browser (this extension doesn't block ad requests, so
+  it can't fix that) rather than a one-off glitch — but a persistent
+  **"⟳ Playback blocked — click to reload"** button is left on the player
+  itself so you're never just stuck looking at a dead, unclickable video
+  area with nothing to do about it; it disappears once playback is
+  actually confirmed to have resumed.
 
 This is a more direct point of conflict with YouTube's own enforcement
 than ad-skipping is: skipping ads uses controls YouTube's player already
@@ -128,7 +154,8 @@ page.
   through until selectors are updated).
 - The auto-reload recovery is best-effort: it's capped at 2 attempts per
   video and there's no guarantee reloading actually clears the block —
-  YouTube may re-show the dialog immediately.
+  YouTube may re-show the warning immediately. Past that cap, the on-player
+  "click to reload" button is a manual fallback, not an automatic fix.
 - The toolbar icon's light rim (added by `gen_icons.py`) was tuned and
   visually checked against Chrome's actual default light toolbar color and
   a representative dark-theme toolbar color, not against every theme or
@@ -251,7 +278,7 @@ $ echo $?
 0
 ```
 
-Last run: 2026-08-28 10:55 UTC. This block is a static snapshot — it will go
+Last run: 2026-08-29 11:30 UTC. This block is a static snapshot — it will go
 stale as the code changes. Once pushed to GitHub, remove this section (or
 just point to it in the badge) and rely on the live Actions run instead.
 
