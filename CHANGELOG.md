@@ -3,6 +3,45 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.5]
+
+### Fixed
+- **The actual root cause, found from a real diagnostic log.** The 1.3.4
+  watchdog logged its findings, and a user pasted one back: `video.paused
+  === false`, `video.error === null` - the exact signals this extension
+  was treating as proof of health - while `readyState` was wedged at
+  `HAVE_METADATA` (1) and playback had frozen indefinitely. A video can
+  report itself as "playing" while never actually rendering a single
+  frame, forever, without ever becoming officially "paused" or "errored".
+  Trusting `!paused && !error` alone as "healthy" - which every recovery
+  check in this extension did, including the ad-block-warning path itself
+  - was the gap that let this slip through three previous fix attempts.
+- Added `looksHealthy(video)`, now used everywhere this extension decides
+  whether playback needs recovering: also requires `readyState >=
+  HAVE_CURRENT_DATA` (2), not just "not paused and no error".
+- Added a third independent watchdog specifically for this failure mode:
+  samples `video.currentTime` at most once per real second (not once per
+  tick - a MutationObserver storm can call `tick()` far more often than
+  the 300ms interval, which would otherwise shrink the effective
+  detection window) and accumulates real elapsed seconds whenever it
+  hasn't meaningfully advanced while the video reports itself as playing.
+  After 6 accumulated stalled seconds, triggers recovery - skipping the
+  `video.play()` step this time, since calling `.play()` on an element
+  that already considers itself playing is a no-op in every major browser
+  and can't unstick a wedged network fetch; goes straight to the reload
+  fallback, which is what's actually shown to fix this.
+- Verified with two new regression tests reproducing the exact reported
+  state (`paused: false`, `error: null`, `readyState: 1`, frozen
+  `currentTime`, no ad-block warning present at all - confirmed: now
+  triggers recovery) and a genuinely healthy-playback case (`readyState:
+  4`, `currentTime` actually advancing every 250ms, run for the full 16s
+  test window) confirming the fix doesn't turn into a new false-positive.
+  Also had to fix two *existing* "recovers on its own" regression fixtures
+  that only faked `paused`/`readyState` without simulating real
+  `currentTime` progress - they were passing before by accident, and
+  would have (correctly) started failing once the stall watchdog could
+  see they weren't actually advancing either.
+
 ## [1.3.4]
 
 ### Added

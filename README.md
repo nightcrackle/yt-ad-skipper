@@ -146,19 +146,37 @@ Everything above only ever runs when one of the known ad-block-warning
 elements is actually found — if a stuck, blank player is caused by
 something else (a different YouTube error this extension has no selector
 for, or a bug in this extension's own ad-skip logic), that code path
-never runs at all. A separate watchdog exists specifically for that gap:
-it reacts to a genuine `video.error` (a real `MediaError` the browser
-itself sets) or the `<video>` element being missing outright for a
-sustained ~1.8s on a watch page — neither of which is ever true just
-because you paused the video yourself, so it can't misfire on an ordinary
-manual pause — and runs the same `video.play()`-then-reload recovery as
-above regardless of whether any ad-block warning was ever detected.
-Whenever it (or the ad-block path) attempts recovery, it logs a
-diagnostic snapshot to the console (`console.warn`, prefixed
-`[YT Ad Skipper]`) with the player/video state at that moment — open
-devtools (F12 → Console) if this happens again and search for that
-prefix; that snapshot is far more useful for tracking down what's
-actually going on than a description of what was on screen.
+never runs at all. Three separate signals exist for that gap, none of
+which are ever true just because you paused the video yourself, so none
+of them can misfire on an ordinary manual pause:
+
+- A genuine `video.error` (a real `MediaError` the browser itself sets).
+- The `<video>` element being missing outright for a sustained ~1.8s on a
+  watch page.
+- **The video reporting itself as playing (not paused, no error) while
+  never actually making progress.** This one was found from a real
+  diagnostic log a user pasted back: `paused: false`, `error: null` —
+  passing every check above — while `readyState` was wedged at
+  `HAVE_METADATA` and playback had frozen indefinitely. A video can claim
+  to be playing without ever rendering a frame, forever. Every recovery
+  check in this extension now also requires `readyState >=
+  HAVE_CURRENT_DATA`, and a dedicated watchdog separately tracks whether
+  `currentTime` is actually advancing over real seconds (sampled at most
+  once/second, deliberately not once per tick, so a burst of
+  MutationObserver-triggered ticks can't shrink the detection window) —
+  after 6 real seconds of zero progress, this one reloads directly rather
+  than trying `video.play()` first, since calling `.play()` on something
+  that already claims to be playing is a no-op in every major browser.
+
+All three run the same recovery (or, for the stall case, go straight to
+the reload fallback) regardless of whether any ad-block warning was ever
+detected. Whenever any of them attempts recovery, it logs a diagnostic
+snapshot to the console (`console.warn`, prefixed `[YT Ad Skipper]`) with
+the player/video state at that moment — open devtools (F12 → Console) if
+this happens again and search for that prefix; that snapshot is far more
+useful for tracking down what's actually going on than a description of
+what was on screen. It's also exactly how the third signal above was
+found — read the log, don't just guess from what's visible on screen.
 
 ## Limitations (read before relying on this)
 
@@ -186,13 +204,16 @@ actually going on than a description of what was on screen.
   video and there's no guarantee reloading actually clears the block —
   YouTube may re-show the warning immediately. Past that cap, the on-player
   "click to reload" button is a manual fallback, not an automatic fix.
-- The independent stuck-playback watchdog only reacts to a real
-  `video.error` or a sustained (~1.8s) missing `<video>` element — it
-  deliberately does *not* treat "just paused" as stuck, since that would
-  risk reloading a video you paused on purpose. If a stall doesn't produce
-  either signal (e.g. the video is present, not erroring, but silently
-  buffering forever), it won't be caught automatically; check the
-  devtools console for a `[YT Ad Skipper]` diagnostic log either way.
+- The independent stuck-playback watchdog (three signals: a real
+  `video.error`, a sustained ~1.8s missing `<video>` element, or 6 real
+  seconds of `currentTime` not advancing while the video claims to be
+  playing) deliberately does *not* treat "just paused" as stuck on its
+  own, since that would risk reloading a video you paused on purpose. If
+  a stall somehow doesn't trip any of the three (a boundary case none of
+  the current regression tests exercise), it won't be caught
+  automatically; check the devtools console for a `[YT Ad Skipper]`
+  diagnostic log either way — that log is what found the third signal
+  above in the first place.
 - The toolbar icon's light rim (added by `gen_icons.py`) was tuned and
   visually checked against Chrome's actual default light toolbar color and
   a representative dark-theme toolbar color, not against every theme or
@@ -315,7 +336,7 @@ $ echo $?
 0
 ```
 
-Last run: 2026-08-29 12:19 UTC. This block is a static snapshot — it will go
+Last run: 2026-08-29 12:46 UTC. This block is a static snapshot — it will go
 stale as the code changes. Once pushed to GitHub, remove this section (or
 just point to it in the badge) and rely on the live Actions run instead.
 

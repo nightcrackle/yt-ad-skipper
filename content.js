@@ -69,14 +69,26 @@
  * itself (e.g. a false-positive ad-showing misclassification jumping a
  * real video to its own end via fastForwardAd() - see the sanity bound
  * there). Rather than only reacting when a known warning element is
- * found, the watchdog reacts to two signals the browser/player only ever
- * sets when something is actually broken - a real MediaError, or the
- * <video> element being missing outright for a sustained stretch - so it
- * can't misfire on an ordinary manual pause, and it's the fallback for
+ * found, it reacts to signals the browser/player only ever sets when
+ * something is actually broken:
+ *   - A real MediaError, or the <video> element missing outright for a
+ *     sustained stretch.
+ *   - A video that reports itself as playing (paused === false, no
+ *     error) but never actually makes progress - confirmed as a real
+ *     failure mode via this extension's own diagnostic log: readyState
+ *     wedged at HAVE_METADATA, currentTime frozen, indefinitely. Trusting
+ *     "not paused and no error" as proof of health was the gap that let
+ *     this slip through the first two watchdog signals; looksHealthy()
+ *     now also requires readyState >= HAVE_CURRENT_DATA, and a separate
+ *     watchdog tracks currentTime across real wall-clock seconds to catch
+ *     it even when readyState alone doesn't.
+ * None of this is ever true just because the user paused deliberately, so
+ * it can't misfire on an ordinary manual pause, and it's the fallback for
  * whenever this extension's guess at *why* playback is stuck is wrong.
- * When it fires, it logs a diagnostic snapshot (console.warn, prefixed
- * "[YT Ad Skipper]") of the player/video state, since guessing at this
- * blind twice already is exactly what this exists to stop doing.
+ * When any of it fires, it logs a diagnostic snapshot (console.warn,
+ * prefixed "[YT Ad Skipper]") of the player/video state - that log is
+ * what actually found the stalled-playback gap above, rather than
+ * guessing blind a third time.
  */
 
 (() => {
@@ -151,6 +163,18 @@
   // swap) without misfiring, low enough to still catch a genuine stall
   // quickly.
   const STUCK_PLAYBACK_STREAK_THRESHOLD = 6;
+
+  // The stalled-playback watchdog samples currentTime at most this often
+  // (real wall-clock time, not tick count - a MutationObserver storm can
+  // call tick() far more often than the 300ms interval does, and sampling
+  // on every single call would shrink the effective detection window).
+  const STALL_SAMPLE_INTERVAL_MS = 1000;
+
+  // How many real seconds of "reports itself as playing, but currentTime
+  // hasn't moved" before treating it as a genuine stall rather than a
+  // normal brief rebuffer (which is common and usually resolves in a
+  // couple of seconds on its own).
+  const STALLED_SECONDS_THRESHOLD = 6;
 
   function loadSettings() {
     chrome.storage.sync.get(
@@ -423,6 +447,25 @@
     return info;
   }
 
+  // HTMLMediaElement.readyState: 0 = HAVE_NOTHING, 1 = HAVE_METADATA (this
+  // is the one that matters here - the browser knows duration/dimensions
+  // but has no actual frame data at the current position), 2 =
+  // HAVE_CURRENT_DATA, 3 = HAVE_FUTURE_DATA, 4 = HAVE_ENOUGH_DATA. A
+  // video stuck below HAVE_CURRENT_DATA has nothing to show on screen,
+  // full stop - regardless of what .paused or .error say.
+  const READY_STATE_HAVE_CURRENT_DATA = 2;
+
+  // A confirmed real-world case (reported and diagnosed via the console
+  // log this extension prints): a video can report paused === false and
+  // error === null while genuinely stuck - readyState wedged at
+  // HAVE_METADATA (1), never actually rendering a frame - and just stay
+  // that way indefinitely. "Not paused and no error" was being trusted
+  // here as proof of health; it isn't. Treat a video below
+  // HAVE_CURRENT_DATA the same as paused/errored for this check.
+  function looksHealthy(video) {
+    return Boolean(video) && !video.paused && !video.error && video.readyState >= READY_STATE_HAVE_CURRENT_DATA;
+  }
+
   // Shared by both the ad-block-warning path and the independent
   // stuck-playback watchdog below. Assumes the caller has already set
   // STATE.recoveryCheckPending = true (as the single in-flight guard);
@@ -436,7 +479,7 @@
       reloadToRecoverPlayback();
       return;
     }
-    if (!video.paused && !video.error) {
+    if (looksHealthy(video)) {
       STATE.recoveryCheckPending = false;
       return;
     }
@@ -452,10 +495,24 @@
     setTimeout(() => {
       STATE.recoveryCheckPending = false;
       const v = getVideo();
-      if (!v || v.paused || v.error) {
+      if (!looksHealthy(v)) {
         reloadToRecoverPlayback();
       }
     }, 500);
+  }
+
+  // For the stalled-playback watchdog specifically: unlike the paths
+  // above, video.play() is skipped entirely. The video already reports
+  // itself as "playing" (paused === false) - that's the whole reason this
+  // is a stall and not just a pause - and calling .play() on an element
+  // that already considers itself playing is a no-op in every major
+  // browser; it can't unstick a wedged network fetch. Go straight to the
+  // reload fallback, which is the only thing that's actually shown to fix
+  // this.
+  function attemptStallRecovery() {
+    diagnosePlaybackState('stalled-playback');
+    STATE.recoveryCheckPending = false;
+    reloadToRecoverPlayback();
   }
 
   // This is the fallback once a plain video.play() (tried by the caller
@@ -607,8 +664,7 @@
       // element disappear, even though the reload cap was hit and the
       // underlying block was never fixed.
       if (document.getElementById('yt-ad-skipper-reload-btn')) {
-        const video = getVideo();
-        if (video && !video.paused && !video.error) {
+        if (looksHealthy(getVideo())) {
           removeStuckRecoveryButton();
         }
       }
@@ -641,14 +697,60 @@
         STATE.recoveryCheckPending = true;
         attemptPlaybackRecovery(watchdogVideo && watchdogVideo.error ? 'media-error' : 'missing-video');
       }
+
+      // A third, separate watchdog: catches a video that reports itself
+      // as playing (paused === false, error === null - passing both
+      // checks above) while never actually making progress. Confirmed
+      // via a real diagnostic log from this extension: readyState wedged
+      // at HAVE_METADATA, currentTime frozen, indefinitely - a real
+      // buffering stall that never resolves into either "paused" or
+      // "errored". Sampled at most once a second (not once a tick) so
+      // MutationObserver-triggered extra ticks can't shrink the effective
+      // window; only the video actually failing to advance across real
+      // wall-clock time counts.
+      if (watchdogVideo && !watchdogVideo.paused && !watchdogVideo.error) {
+        const now = Date.now();
+        if (now - lastStallSampleTime >= STALL_SAMPLE_INTERVAL_MS) {
+          if (lastStallSampleCurrentTime >= 0 && Math.abs(watchdogVideo.currentTime - lastStallSampleCurrentTime) < 0.15) {
+            stalledSeconds += (now - lastStallSampleTime) / 1000;
+          } else {
+            stalledSeconds = 0;
+          }
+          lastStallSampleCurrentTime = watchdogVideo.currentTime;
+          lastStallSampleTime = now;
+        }
+      } else {
+        stalledSeconds = 0;
+        lastStallSampleCurrentTime = -1;
+        lastStallSampleTime = 0;
+      }
+
+      if (
+        stalledSeconds >= STALLED_SECONDS_THRESHOLD &&
+        STATE.autoReloadOnBlock &&
+        !STATE.recoveryCheckPending
+      ) {
+        STATE.recoveryCheckPending = true;
+        stalledSeconds = 0;
+        attemptStallRecovery();
+      }
     } else {
       stuckPlaybackStreak = 0;
+      stalledSeconds = 0;
+      lastStallSampleCurrentTime = -1;
+      lastStallSampleTime = 0;
     }
   }
 
   // Consecutive-tick counter for the independent stuck-playback watchdog
   // in tick() - see STUCK_PLAYBACK_STREAK_THRESHOLD above.
   let stuckPlaybackStreak = 0;
+
+  // State for the stalled-playback watchdog in tick() - see
+  // STALLED_SECONDS_THRESHOLD above.
+  let stalledSeconds = 0;
+  let lastStallSampleCurrentTime = -1;
+  let lastStallSampleTime = 0;
 
   // MutationObserver on the player catches class changes (ad start/end)
   // as they happen; a low-frequency interval is a safety net because
@@ -674,6 +776,9 @@
     removeStuckRecoveryButton();
     STATE.recoveryCheckPending = false;
     stuckPlaybackStreak = 0;
+    stalledSeconds = 0;
+    lastStallSampleCurrentTime = -1;
+    lastStallSampleTime = 0;
     setTimeout(attachObserver, 500);
   });
 
