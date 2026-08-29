@@ -1,6 +1,7 @@
 # YouTube Ad Skipper
 
 [![Validate extension](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml/badge.svg)](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml)
+[![License: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 
 A Chrome extension (Manifest V3) that skips YouTube video ads by detecting
 YouTube's own in-player ad state and driving the controls it already
