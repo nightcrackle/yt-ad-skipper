@@ -3,12 +3,6 @@
 [![Validate extension](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml/badge.svg)](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> The CI badge above won't resolve until this repo is pushed to GitHub —
-> replace `nightcrackle/yt-ad-skipper` in the two URLs with your actual GitHub username/org
-> and repo name once it exists there. See [CI validation status](#ci-validation-status)
-> below for the actual last-run result in the meantime. The License badge is
-> a static badge (via shields.io) and works right away.
-
 A Chrome extension (Manifest V3) that skips YouTube video ads by detecting
 YouTube's own in-player ad state and driving the controls it already
 exposes: clicking the "Skip Ad" button when available, or seeking an
@@ -146,6 +140,26 @@ skipping ads was; see the Disclaimer below. If you'd rather not have the
 extension push back on this at all, turn both toggles off in the options
 page.
 
+### Independent stuck-playback watchdog
+
+Everything above only ever runs when one of the known ad-block-warning
+elements is actually found — if a stuck, blank player is caused by
+something else (a different YouTube error this extension has no selector
+for, or a bug in this extension's own ad-skip logic), that code path
+never runs at all. A separate watchdog exists specifically for that gap:
+it reacts to a genuine `video.error` (a real `MediaError` the browser
+itself sets) or the `<video>` element being missing outright for a
+sustained ~1.8s on a watch page — neither of which is ever true just
+because you paused the video yourself, so it can't misfire on an ordinary
+manual pause — and runs the same `video.play()`-then-reload recovery as
+above regardless of whether any ad-block warning was ever detected.
+Whenever it (or the ad-block path) attempts recovery, it logs a
+diagnostic snapshot to the console (`console.warn`, prefixed
+`[YT Ad Skipper]`) with the player/video state at that moment — open
+devtools (F12 → Console) if this happens again and search for that
+prefix; that snapshot is far more useful for tracking down what's
+actually going on than a description of what was on screen.
+
 ## Limitations (read before relying on this)
 
 - This is DOM-based: it reacts to YouTube's existing player markup and
@@ -153,6 +167,12 @@ page.
   it doesn't stop ad requests, it shortens/skips ads after they start.
 - Very short unskippable pre-roll ads may still play briefly before the
   extension can act.
+- Ads longer than 10 minutes (`MAX_PLAUSIBLE_AD_SECONDS` in `content.js`)
+  are not fast-forwarded to their end — this is a deliberate guard against
+  a misclassified real video getting jumped to "ended" instead of an
+  actual ad, not a real-world limitation, since ads that long essentially
+  don't exist. If YouTube ever ships a genuinely longer unskippable ad,
+  this would need to be raised.
 - If YouTube changes its player's HTML/class structure, the selectors in
   `content.js` (`SKIP_BUTTON_SELECTORS`, `ad-showing`/`ad-interrupting`,
   `ADBLOCK_SPECIFIC_SELECTOR`, `ADBLOCK_GENERIC_DIALOG_SELECTOR`) may need
@@ -166,6 +186,13 @@ page.
   video and there's no guarantee reloading actually clears the block —
   YouTube may re-show the warning immediately. Past that cap, the on-player
   "click to reload" button is a manual fallback, not an automatic fix.
+- The independent stuck-playback watchdog only reacts to a real
+  `video.error` or a sustained (~1.8s) missing `<video>` element — it
+  deliberately does *not* treat "just paused" as stuck, since that would
+  risk reloading a video you paused on purpose. If a stall doesn't produce
+  either signal (e.g. the video is present, not erroring, but silently
+  buffering forever), it won't be caught automatically; check the
+  devtools console for a `[YT Ad Skipper]` diagnostic log either way.
 - The toolbar icon's light rim (added by `gen_icons.py`) was tuned and
   visually checked against Chrome's actual default light toolbar color and
   a representative dark-theme toolbar color, not against every theme or
@@ -288,7 +315,7 @@ $ echo $?
 0
 ```
 
-Last run: 2026-08-29 11:46 UTC. This block is a static snapshot — it will go
+Last run: 2026-08-29 12:19 UTC. This block is a static snapshot — it will go
 stale as the code changes. Once pushed to GitHub, remove this section (or
 just point to it in the badge) and rely on the live Actions run instead.
 

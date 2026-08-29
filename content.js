@@ -60,6 +60,23 @@
  * enforcement than ad-skipping is, it depends on YouTube's current
  * markup/text just like the skip logic above, and YouTube can change or
  * strengthen this mechanism at any time.
+ *
+ * There's also an independent stuck-playback watchdog (see tick()),
+ * decoupled entirely from the ad-block-warning detection above. It exists
+ * because "playback silently died and never recovered" isn't always
+ * caused by that specific warning UI - it could be any YouTube error this
+ * extension doesn't have a selector for, or a real bug in this extension
+ * itself (e.g. a false-positive ad-showing misclassification jumping a
+ * real video to its own end via fastForwardAd() - see the sanity bound
+ * there). Rather than only reacting when a known warning element is
+ * found, the watchdog reacts to two signals the browser/player only ever
+ * sets when something is actually broken - a real MediaError, or the
+ * <video> element being missing outright for a sustained stretch - so it
+ * can't misfire on an ordinary manual pause, and it's the fallback for
+ * whenever this extension's guess at *why* playback is stuck is wrong.
+ * When it fires, it logs a diagnostic snapshot (console.warn, prefixed
+ * "[YT Ad Skipper]") of the player/video state, since guessing at this
+ * blind twice already is exactly what this exists to stop doing.
  */
 
 (() => {
@@ -126,6 +143,14 @@
     /ad ?blockers? (are|is) not allowed|please (disable|turn off) (your )?ad ?blocker|allow youtube ads/i;
 
   const MAX_AUTO_RELOADS_PER_VIDEO = 2;
+
+  // How many consecutive 300ms ticks (~1.8s) of "no <video> element" or "a
+  // real MediaError" a watch-like page has to show before the independent
+  // stuck-playback watchdog acts. High enough to ride out normal
+  // transient gaps (an SPA navigation to the next video, an ad-to-content
+  // swap) without misfiring, low enough to still catch a genuine stall
+  // quickly.
+  const STUCK_PLAYBACK_STREAK_THRESHOLD = 6;
 
   function loadSettings() {
     chrome.storage.sync.get(
@@ -226,9 +251,26 @@
     }
   }
 
+  // Virtually all real ads are well under this; a "duration" beyond it
+  // while the player claims ad-showing is far more likely to mean
+  // isAdShowing() misfired on the real content video than an actual
+  // 10+ minute ad. Fast-forwarding a misclassified real video to its own
+  // end would jump straight to "ended" - a stuck, blank player with
+  // nothing to auto-recover it, since that has nothing to do with the
+  // ad-block-warning machinery below. This is a cheap, one-line guard
+  // against that specific failure mode.
+  const MAX_PLAUSIBLE_AD_SECONDS = 600;
+
   function fastForwardAd() {
     const video = getVideo();
     if (video && isFinite(video.duration) && video.duration > 0) {
+      if (video.duration > MAX_PLAUSIBLE_AD_SECONDS) {
+        console.warn(
+          '[YT Ad Skipper] not fast-forwarding - duration looks too long to be an ad',
+          { duration: video.duration, url: location.href }
+        );
+        return false;
+      }
       // Jumping to (just before) the end signals "ad finished" to the player
       // without leaving a visible seek bar jump on the *content* video later.
       video.currentTime = video.duration;
@@ -354,6 +396,66 @@
   function removeStuckRecoveryButton() {
     const btn = document.getElementById('yt-ad-skipper-reload-btn');
     if (btn) btn.remove();
+  }
+
+  // Logs enough state to actually debug a stuck-playback report instead of
+  // guessing at it - player classes, video element state (readyState,
+  // networkState, a real MediaError if one exists, whether it has a
+  // source), and whether any known ad-block-warning selector matched.
+  // Printed with console.warn so it's easy to spot in devtools if this
+  // happens again.
+  function diagnosePlaybackState(reason) {
+    const player = getPlayer();
+    const video = getVideo();
+    const info = {
+      reason,
+      url: location.href,
+      playerClasses: player ? Array.from(player.classList) : null,
+      hasVideo: Boolean(video),
+      videoPaused: video ? video.paused : null,
+      videoReadyState: video ? video.readyState : null,
+      videoNetworkState: video ? video.networkState : null,
+      videoHasSource: video ? Boolean(video.currentSrc || video.getAttribute('src')) : null,
+      videoError: video && video.error ? { code: video.error.code, message: video.error.message } : null,
+      adblockWarningPresent: Boolean(findAdblockWarningElement()),
+    };
+    console.warn('[YT Ad Skipper] stuck playback detected -', info);
+    return info;
+  }
+
+  // Shared by both the ad-block-warning path and the independent
+  // stuck-playback watchdog below. Assumes the caller has already set
+  // STATE.recoveryCheckPending = true (as the single in-flight guard);
+  // this function is responsible for clearing it once it's done, whether
+  // that's right away or after the follow-up check below.
+  function attemptPlaybackRecovery(reason) {
+    diagnosePlaybackState(reason);
+    const video = getVideo();
+    if (!video) {
+      STATE.recoveryCheckPending = false;
+      reloadToRecoverPlayback();
+      return;
+    }
+    if (!video.paused && !video.error) {
+      STATE.recoveryCheckPending = false;
+      return;
+    }
+    // Try the light fix first: a plain video.play() resumes it instantly,
+    // no reload/flicker needed, and covers the common case where the
+    // player is simply paused rather than genuinely broken. Only fall
+    // back to a full page reload if that doesn't actually result in
+    // playback resuming shortly after.
+    const playAttempt = video.play();
+    if (playAttempt && typeof playAttempt.catch === 'function') {
+      playAttempt.catch(() => {});
+    }
+    setTimeout(() => {
+      STATE.recoveryCheckPending = false;
+      const v = getVideo();
+      if (!v || v.paused || v.error) {
+        reloadToRecoverPlayback();
+      }
+    }, 500);
   }
 
   // This is the fallback once a plain video.play() (tried by the caller
@@ -492,56 +594,61 @@
         STATE.recoveryCheckPending = true;
         // Give YouTube's own pause a moment to actually apply before
         // checking whether playback is stuck.
-        setTimeout(() => {
-          const video = getVideo();
-          if (!video) {
-            STATE.recoveryCheckPending = false;
-            reloadToRecoverPlayback();
-            return;
-          }
-          if (!video.paused) {
-            STATE.recoveryCheckPending = false;
-            return;
-          }
-          // Try the light fix first: YouTube's own enforcement very often
-          // just leaves an otherwise-working video paused once the
-          // warning is gone (rather than broken/unloaded) - a plain
-          // video.play() resumes it instantly, with no reload/flicker
-          // needed. Only fall back to a full page reload if that doesn't
-          // actually result in playback resuming shortly after.
-          const playAttempt = video.play();
-          if (playAttempt && typeof playAttempt.catch === 'function') {
-            playAttempt.catch(() => {});
-          }
-          setTimeout(() => {
-            STATE.recoveryCheckPending = false;
-            const v = getVideo();
-            if (!v || v.paused) {
-              reloadToRecoverPlayback();
-            }
-          }, 500);
-        }, 800);
+        setTimeout(() => attemptPlaybackRecovery('adblock-warning'), 800);
       }
 
       // Independent of whether the warning is still visibly present on
       // *this* tick - it may already be gone, either because we just
-      // deleted the modal ourselves or because the in-player variant
-      // cleared on its own - a stuck-recovery button that's currently
-      // showing should only be cleared once the video is actually
-      // confirmed playing again. Clearing it just because "detected"
-      // happened to be false this tick would hide it the instant a
-      // removed modal makes the warning element disappear, even though
-      // the reload cap was hit and the underlying block was never fixed.
+      // deleted it ourselves or because it cleared on its own - a
+      // stuck-recovery button that's currently showing should only be
+      // cleared once the video is actually confirmed playing again.
+      // Clearing it just because "detected" happened to be false this
+      // tick would hide it the instant a removed warning makes the
+      // element disappear, even though the reload cap was hit and the
+      // underlying block was never fixed.
       if (document.getElementById('yt-ad-skipper-reload-btn')) {
         const video = getVideo();
-        if (video && !video.paused) {
+        if (video && !video.paused && !video.error) {
           removeStuckRecoveryButton();
         }
       }
     } else {
       removeStuckRecoveryButton();
     }
+
+    // Independent watchdog, decoupled entirely from ad-block-warning
+    // detection above: catches playback that's stuck for reasons that
+    // have nothing to do with that specific warning UI - a genuine media
+    // error, or the <video> element being missing outright for a
+    // sustained stretch. Both are signals the browser/player only sets
+    // when something is actually broken (video.error is never set just
+    // because the user paused), so this can't misfire on a normal manual
+    // pause, and it isn't gated on any selector matching first - it's
+    // the fallback for whenever this extension's guess at *why* playback
+    // is stuck turns out to be wrong.
+    if (onWatchLikePage) {
+      const watchdogVideo = getVideo();
+      if (!watchdogVideo || watchdogVideo.error) {
+        stuckPlaybackStreak += 1;
+      } else {
+        stuckPlaybackStreak = 0;
+      }
+      if (
+        stuckPlaybackStreak >= STUCK_PLAYBACK_STREAK_THRESHOLD &&
+        STATE.autoReloadOnBlock &&
+        !STATE.recoveryCheckPending
+      ) {
+        STATE.recoveryCheckPending = true;
+        attemptPlaybackRecovery(watchdogVideo && watchdogVideo.error ? 'media-error' : 'missing-video');
+      }
+    } else {
+      stuckPlaybackStreak = 0;
+    }
   }
+
+  // Consecutive-tick counter for the independent stuck-playback watchdog
+  // in tick() - see STUCK_PLAYBACK_STREAK_THRESHOLD above.
+  let stuckPlaybackStreak = 0;
 
   // MutationObserver on the player catches class changes (ad start/end)
   // as they happen; a low-frequency interval is a safety net because
@@ -566,6 +673,7 @@
     removeManualPrompt();
     removeStuckRecoveryButton();
     STATE.recoveryCheckPending = false;
+    stuckPlaybackStreak = 0;
     setTimeout(attachObserver, 500);
   });
 

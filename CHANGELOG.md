@@ -3,6 +3,57 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.4]
+
+### Added
+- **Independent stuck-playback watchdog**, decoupled entirely from
+  ad-block-warning detection. The last two fixes (1.3.2, 1.3.3) both only
+  ever ran inside the ad-block-warning code path - if a stuck, blank
+  player wasn't actually caused by that specific warning UI, neither fix
+  could ever have touched it, since that code never runs unless one of
+  the known warning selectors is found. This watchdog reacts instead to
+  two signals the browser/player only ever sets when something is
+  genuinely broken - a real `video.error` (a `MediaError`), or the
+  `<video>` element being missing outright for a sustained ~1.8s stretch
+  on a watch page - neither of which is ever true just because the user
+  paused deliberately, so it can't misfire on a normal manual pause. It
+  reuses the same recovery flow (try `video.play()`, then fall back to
+  the capped reload / persistent recovery button from 1.3.2) regardless
+  of whether any ad-block warning was ever found.
+- **Diagnostic logging.** Whenever recovery is attempted (either path),
+  a `console.warn('[YT Ad Skipper] stuck playback detected - ...')`
+  snapshot is logged with player classes, video readyState/networkState/
+  error, whether it has a source, and whether any ad-block warning
+  selector currently matches - so a report like "it just stops there"
+  can actually be debugged from devtools next time, instead of guessed
+  at blind a third time.
+
+### Fixed
+- **`fastForwardAd()` could jump a real, long video to its own end.**
+  If `isAdShowing()` ever misclassifies the real content player as
+  showing an ad (a false positive on the `ad-showing`/`ad-interrupting`
+  classes), the old code would jump the *real* video's `currentTime` to
+  its `duration` - triggering "ended" on a video the user was actually
+  watching, with nothing to auto-recover it since that has nothing to do
+  with the ad-block-warning machinery. Added `MAX_PLAUSIBLE_AD_SECONDS`
+  (600s): real ads are essentially always well under this, so a "duration"
+  beyond it while ad-showing is now refused (logged, not acted on)
+  instead of blindly trusted. Verified: a normal 15s ad still gets fast-
+  forwarded exactly as before; a misclassified 2-hour "ad" no longer gets
+  its `currentTime` touched at all.
+- Verified with four new regression tests: a genuine media error with
+  no ad-block warning present at all (must still recover, via the new
+  watchdog only), a missing `<video>` with no warning present (same), a
+  plain manual pause - video present, paused, no error, no warning (must
+  trigger *nothing*, ever - the critical false-positive guard), and the
+  `fastForwardAd()` duration bound (both the normal and misclassified
+  cases). Also caught and fixed a bug in several *existing* regression
+  fixtures: `<video src="about:blank">` turns out to set a real, native
+  `MediaError` in actual Chromium (confirmed by testing it directly) -
+  which was silently masking what several existing tests actually
+  verified. Fixtures now use a bare `<video>` (no `src`) as the
+  error-free baseline; all existing scenarios re-verified clean afterward.
+
 ## [1.3.3]
 
 ### Fixed
