@@ -641,15 +641,30 @@
     const count = Number(sessionStorage.getItem(key) || '0');
 
     if (count >= MAX_AUTO_RELOADS_PER_VIDEO) {
+      console.warn(
+        '[YT Ad Skipper] reload cap hit, showing manual button instead -',
+        JSON.stringify({ videoId, attemptsSoFar: count, url: location.href })
+      );
       showToast('Still blocked — click the button on the video to reload');
       showStuckRecoveryButton();
       return;
     }
     sessionStorage.setItem(key, String(count + 1));
 
+    // Logged specifically because a prior report showed the
+    // `diagnosePlaybackState` snapshot from the *start* of a recovery
+    // attempt, but nothing confirming whether it actually escalated to a
+    // real page reload afterward - there was no way to tell whether the
+    // video recovered on its own (no reload needed) or a reload happened
+    // that then hit the exact same failure again. This closes that gap.
+    const target = buildReloadTarget();
+    console.warn(
+      '[YT Ad Skipper] reloading to recover playback -',
+      JSON.stringify({ videoId, attemptNumber: count + 1, maxAttempts: MAX_AUTO_RELOADS_PER_VIDEO, from: location.href, to: target })
+    );
     showToast('Ad-block warning detected — reloading…');
     setTimeout(() => {
-      location.href = buildReloadTarget();
+      location.href = target;
     }, 400);
   }
 

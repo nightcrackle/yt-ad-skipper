@@ -3,6 +3,48 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.8]
+
+### Investigated, not confirmed fixed
+- **Playback still stuck on a real video, confirmed to only happen with
+  this extension enabled.** A user report ruled out the two leading
+  suspects from 1.3.7's investigation: it does NOT happen with the
+  extension disabled (so it isn't a plain YouTube/network problem this
+  extension is just innocently witnessing), and there's no DNS-level
+  ad/tracker blocking involved. The diagnostic log this time showed
+  `readyState: 1`, `networkState: 2`, no `MediaError` - and the browser's
+  own network log right below it showed `net::ERR_NAME_NOT_RESOLVED` on
+  the actual video CDN (`googlevideo.com`) requests. A content script
+  cannot cause a DNS lookup to fail directly - this extension has no
+  network-interception permissions at all (`manifest.json` only requests
+  `storage`) - so whatever's happening is indirect: something this
+  extension *does* (most likely the forced full-page reload in
+  `reloadToRecoverPlayback()`, triggered when playback looks unhealthy)
+  is the plausible link, not anything in the DOM-detection logic itself.
+  A full page reload is a much heavier intervention than letting YouTube's
+  own player retry in place - it tears down all in-page connection/retry
+  state and forces a fresh top-level DNS resolution at exactly the moment
+  network conditions were already flaky enough to look "stuck." This is a
+  coherent theory, not a confirmed root cause.
+- Added logging to `reloadToRecoverPlayback()` itself: every time it
+  actually navigates, it now logs `[YT Ad Skipper] reloading to recover
+  playback` with the attempt number, cap, and the exact from/to URLs; when
+  the cap is hit instead, it logs `[YT Ad Skipper] reload cap hit`. This
+  closes a real gap found while investigating this report: the existing
+  `diagnosePlaybackState` log only fires at the *start* of a recovery
+  attempt, so there was no way to confirm from a pasted log alone whether
+  a reload actually happened, how many times, or to what URL. Verified
+  against the full regression suite - the new logs appear at exactly the
+  points the existing tests already expect a reload or a cap-hit
+  (`watch_real_warning`, `watch_reload_cap_exhausted`,
+  `watch_stalled_playback`, etc.), nothing else changed.
+- Next step is on hold for one more data point: whether this still happens
+  with the options page's "Auto-reload if playback is stuck" toggle turned
+  off (leaving ad-skip and ad-block-banner removal on, but disabling the
+  `video.play()`/reload recovery path specifically). If it stops
+  happening with just that one toggle off, that isolates the reload
+  mechanism as the actual cause instead of leaving it a theory.
+
 ## [1.3.7]
 
 ### Fixed

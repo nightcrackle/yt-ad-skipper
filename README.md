@@ -1,6 +1,6 @@
 # YouTube Ad Skipper
 
-[![Validate extension](https://github.com/OWNER/REPO/actions/workflows/validate.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/validate.yml)
+[![Validate extension](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml/badge.svg)](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A Chrome extension (Manifest V3) that skips YouTube video ads by detecting
@@ -8,30 +8,6 @@ YouTube's own in-player ad state and driving the controls it already
 exposes: clicking the "Skip Ad" button when available, or seeking an
 unskippable ad's `<video>` element to the end of its duration so the
 player advances to your content.
-
-## What this extension actually does
-
-- Watches the YouTube player's CSS state (`ad-showing` / `ad-interrupting`
-  classes) to know when an ad is on screen.
-- **Auto-skip mode (default on):** as soon as an ad is detected, it clicks
-  the native "Skip Ad" button if present; if there's no skip button yet
-  (e.g. the first few seconds of an unskippable ad), it seeks the ad's
-  video to its end, which the player treats as the ad finishing.
-- **Manual mode:** if you turn auto-skip off in the popup, the extension
-  instead shows a small floating "Skip Ad" button over the player during
-  ads that you click yourself.
-- **Mute during ads:** optionally mutes the tab while an ad is playing and
-  restores your previous volume/mute state once it ends.
-- Tracks how many ads it has skipped (session count on the toolbar badge,
-  all-time count in the popup).
-- **Skip log:** every skip is recorded (time, video title/link, and whether
-  it was auto or manual) in a full **Settings & skip logs** page, opened
-  from the "Settings & skip logs" button in the popup. See below.
-- **Ad-block warning removal:** if YouTube shows its "Ad blockers are not
-  allowed on YouTube" dialog and pauses the video, the extension removes
-  the dialog and, if playback is still stuck, reloads the page to recover
-  it. See "Ad-block warning handling" below — this one is worth reading
-  before you rely on it.
 
 ## Limitations (read before relying on this)
 
@@ -94,6 +70,28 @@ player advances to your content.
   player id — if this happens again, that log is what turns it into a
   reproducible case instead of another guess; please include it when
   reporting.
+- **Auto-reload and real playback stalls**: reported behavior where a real
+  video gets stuck (frozen, `readyState` never advances past
+  `HAVE_METADATA`) in a way confirmed to only happen with this extension
+  enabled - not a plain YouTube/network issue the extension is just
+  witnessing, and not caused by DNS-level ad blocking. The one diagnosed
+  case so far showed the actual video CDN requests failing with
+  `net::ERR_NAME_NOT_RESOLVED`, which a content script cannot cause
+  directly (this extension has no network-interception permission at all -
+  see `manifest.json`). The working theory is that the automatic full-page
+  reload in `reloadToRecoverPlayback()` - a much heavier intervention than
+  letting YouTube's own player retry in place - is what's actually
+  converting a brief, self-healing network hiccup into a hard failure, by
+  tearing down in-page connection state and forcing a fresh top-level DNS
+  resolution at exactly the wrong moment. Not confirmed. If this happens
+  to you, the most useful single test is turning off "Auto-reload if
+  playback is stuck" in the options page (leaves ad-skipping and ad-block-
+  banner removal on, disables only the reload/`video.play()` recovery
+  path) and seeing whether the stall stops happening - that isolates the
+  mechanism instead of leaving it a guess. As of 1.3.8, every actual
+  reload attempt (and every time the reload cap is hit) is logged to the
+  console with the attempt number and target URL, so a future report can
+  show definitively whether a reload happened at all.
 - Not affiliated with Google or YouTube. Using it may be against YouTube's
   Terms of Service depending on how you use it — this is provided for
   personal, educational use, unpacked/local installation only. It is not
