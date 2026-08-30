@@ -2,11 +2,20 @@
  * YouTube Ad Skipper - content script
  *
  * How ad detection works:
- * YouTube's player container (`.html5-video-player` / `#movie_player`) gets
- * the class `ad-showing` (and often `ad-interrupting`) added while any ad
- * is playing, and removed the moment it ends. We watch for that with a
- * MutationObserver plus a low-frequency polling fallback (YouTube's SPA
- * navigation doesn't always fire clean DOM events).
+ * YouTube's player container gets the class `ad-showing` (and often
+ * `ad-interrupting`) added while any ad is playing, and removed the
+ * moment it ends. We watch for that with a MutationObserver plus a
+ * low-frequency polling fallback (YouTube's SPA navigation doesn't always
+ * fire clean DOM events). getPlayer() resolves the container itself: a
+ * normal watch page's singleton player is `#movie_player`; the Shorts
+ * feed reuses a single player instance across the whole feed at
+ * `#shorts-player` instead (confirmed against several real, unrelated
+ * YouTube extensions/userscripts) - a plain `.html5-video-player` class
+ * lookup can't tell those apart from the other player-shaped elements
+ * Shorts keeps mounted for adjacent items, and is kept only as a last-
+ * resort fallback if neither id is found. getVideo() is always scoped to
+ * whatever getPlayer() resolves, never an unscoped document-wide search,
+ * so the two can never disagree about which video is "the" video.
  *
  * When an ad is detected:
  *   1. If a "Skip Ad" button is present and enabled, we click it.
@@ -208,12 +217,39 @@
     }
   });
 
+  // Confirmed against several independent, unrelated real-world YouTube
+  // extensions/userscripts (SponsorBlock, return-youtube-dislike,
+  // better-yt-shorts, control-panel-for-youtube, and others): the Shorts
+  // feed (/shorts/...) keeps several `ytd-reel-video-renderer` items
+  // mounted in the DOM at once (the current short plus adjacent ones
+  // preloaded for smooth scrolling), and reuses a single player instance
+  // - `#shorts-player` - re-parenting it into whichever one is active,
+  // rather than instantiating a separate player per short. A plain
+  // `document.querySelector('.html5-video-player')` has no way to tell
+  // those apart and can grab a stale or inactive one; `#shorts-player`
+  // is the one real extensions target instead. A normal watch page's
+  // singleton player is `#movie_player`. Falling back to the old
+  // class-based lookup only if the expected id isn't found keeps this
+  // from going fully blind if YouTube's markup shifts again.
   function getPlayer() {
-    return document.querySelector('.html5-video-player');
+    if (location.pathname.startsWith('/shorts/')) {
+      return document.querySelector('#shorts-player') || document.querySelector('.html5-video-player');
+    }
+    return document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
   }
 
+  // Always scoped to the player resolved above, never an unscoped
+  // document-wide search - the two must never be able to disagree about
+  // which video is "the" video. An earlier version searched the whole
+  // document for `video.html5-main-video` / `video`, which on a page
+  // with more than one player-shaped element mounted (Shorts feed
+  // preloading, and reportedly YouTube playlist/autoplay transitions -
+  // see README) could silently grab a different element than getPlayer()
+  // just resolved, and every ad-detection/skip decision downstream of
+  // that mismatch would be acting on the wrong video.
   function getVideo() {
-    return document.querySelector('video.html5-main-video') || document.querySelector('video');
+    const scope = getPlayer() || document;
+    return scope.querySelector('video.html5-main-video') || scope.querySelector('video');
   }
 
   function getVideoTitle() {
@@ -297,6 +333,23 @@
       }
       // Jumping to (just before) the end signals "ad finished" to the player
       // without leaving a visible seek bar jump on the *content* video later.
+      // Logged specifically so a "it skipped through my whole playlist"
+      // report can be matched against exactly which video got jumped and
+      // why, rather than guessed at - see the playlist caveat in README.
+      let playlistId = null;
+      try {
+        playlistId = new URL(location.href).searchParams.get('list');
+      } catch (e) {
+        // ignore
+      }
+      console.info('[YT Ad Skipper] fast-forwarding detected ad', {
+        url: location.href,
+        playlistId,
+        videoId: getVideoId(),
+        durationBefore: video.duration,
+        currentTimeBefore: video.currentTime,
+        playerElementId: getPlayer() ? getPlayer().id : null,
+      });
       video.currentTime = video.duration;
       return true;
     }
@@ -471,34 +524,56 @@
   // STATE.recoveryCheckPending = true (as the single in-flight guard);
   // this function is responsible for clearing it once it's done, whether
   // that's right away or after the follow-up check below.
+  //
+  // Wrapped in try/catch/finally throughout specifically so that
+  // STATE.recoveryCheckPending can never get stuck permanently true if
+  // something here throws unexpectedly (e.g. a page shape this extension
+  // hasn't accounted for - Shorts and playlists have both turned up real
+  // surprises). If that flag ever got stuck true, every recovery path in
+  // this extension - the ad-block-warning one included - would silently
+  // stop doing anything until the page was manually reloaded, which is
+  // exactly indistinguishable from "the extension is disabled".
   function attemptPlaybackRecovery(reason) {
-    diagnosePlaybackState(reason);
-    const video = getVideo();
-    if (!video) {
-      STATE.recoveryCheckPending = false;
-      reloadToRecoverPlayback();
-      return;
-    }
-    if (looksHealthy(video)) {
-      STATE.recoveryCheckPending = false;
-      return;
-    }
-    // Try the light fix first: a plain video.play() resumes it instantly,
-    // no reload/flicker needed, and covers the common case where the
-    // player is simply paused rather than genuinely broken. Only fall
-    // back to a full page reload if that doesn't actually result in
-    // playback resuming shortly after.
-    const playAttempt = video.play();
-    if (playAttempt && typeof playAttempt.catch === 'function') {
-      playAttempt.catch(() => {});
-    }
-    setTimeout(() => {
-      STATE.recoveryCheckPending = false;
-      const v = getVideo();
-      if (!looksHealthy(v)) {
+    let asyncFollowUpScheduled = false;
+    try {
+      diagnosePlaybackState(reason);
+      const video = getVideo();
+      if (!video) {
         reloadToRecoverPlayback();
+        return;
       }
-    }, 500);
+      if (looksHealthy(video)) {
+        return;
+      }
+      // Try the light fix first: a plain video.play() resumes it
+      // instantly, no reload/flicker needed, and covers the common case
+      // where the player is simply paused rather than genuinely broken.
+      // Only fall back to a full page reload if that doesn't actually
+      // result in playback resuming shortly after.
+      const playAttempt = video.play();
+      if (playAttempt && typeof playAttempt.catch === 'function') {
+        playAttempt.catch(() => {});
+      }
+      asyncFollowUpScheduled = true;
+      setTimeout(() => {
+        try {
+          const v = getVideo();
+          if (!looksHealthy(v)) {
+            reloadToRecoverPlayback();
+          }
+        } catch (e) {
+          console.error('[YT Ad Skipper] recovery follow-up check failed -', e);
+        } finally {
+          STATE.recoveryCheckPending = false;
+        }
+      }, 500);
+    } catch (e) {
+      console.error('[YT Ad Skipper] recovery attempt failed -', e);
+    } finally {
+      if (!asyncFollowUpScheduled) {
+        STATE.recoveryCheckPending = false;
+      }
+    }
   }
 
   // For the stalled-playback watchdog specifically: unlike the paths
@@ -508,11 +583,17 @@
   // that already considers itself playing is a no-op in every major
   // browser; it can't unstick a wedged network fetch. Go straight to the
   // reload fallback, which is the only thing that's actually shown to fix
-  // this.
+  // this. Fully synchronous, so a single try/finally is enough to
+  // guarantee the in-flight guard always clears.
   function attemptStallRecovery() {
-    diagnosePlaybackState('stalled-playback');
-    STATE.recoveryCheckPending = false;
-    reloadToRecoverPlayback();
+    try {
+      diagnosePlaybackState('stalled-playback');
+      reloadToRecoverPlayback();
+    } catch (e) {
+      console.error('[YT Ad Skipper] stall recovery failed -', e);
+    } finally {
+      STATE.recoveryCheckPending = false;
+    }
   }
 
   // This is the fallback once a plain video.play() (tried by the caller
@@ -614,7 +695,24 @@
     if (prompt) prompt.remove();
   }
 
+  // The whole body is wrapped in try/catch: this runs on every 300ms
+  // interval tick and every player class mutation, so an unhandled
+  // exception here on one call must never be allowed to look like "the
+  // extension stopped working" - the interval keeps calling tick() every
+  // 300ms regardless, but a real bug that throws on every single
+  // invocation from some point forward (a page shape this extension
+  // hasn't accounted for, same as the Shorts/playlist surprises already
+  // found) would otherwise silently disable everything downstream of
+  // wherever it throws, with nothing but a manual reload to clear it.
   function tick() {
+    try {
+      tickBody();
+    } catch (e) {
+      console.error('[YT Ad Skipper] tick() failed -', e);
+    }
+  }
+
+  function tickBody() {
     const adShowing = isAdShowing();
 
     if (adShowing) {
@@ -756,12 +854,21 @@
   // as they happen; a low-frequency interval is a safety net because
   // YouTube's SPA transitions don't always mutate the node we're watching.
   let observedPlayer = null;
+  let playerObserver = null;
   function attachObserver() {
     const player = getPlayer();
     if (!player || player === observedPlayer) return;
+    // Disconnect the previous observer before attaching a new one -
+    // without this, switching between watch pages, Shorts, and back
+    // (each a different player element) left every earlier observer
+    // still attached to its now-stale node instead of being torn down,
+    // and if a stale node keeps receiving mutations for any reason, its
+    // leaked observer keeps calling tick() indefinitely alongside the
+    // current one.
+    if (playerObserver) playerObserver.disconnect();
     observedPlayer = player;
-    const observer = new MutationObserver(() => tick());
-    observer.observe(player, { attributes: true, attributeFilter: ['class'] });
+    playerObserver = new MutationObserver(() => tick());
+    playerObserver.observe(player, { attributes: true, attributeFilter: ['class'] });
   }
 
   setInterval(() => {

@@ -3,6 +3,68 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.6]
+
+### Fixed
+- **Extension went dead after a Shorts round-trip, requiring a manual
+  reload to recover.** Root cause: `getPlayer()` resolved the player via
+  `document.querySelector('.html5-video-player')` - a *class*, not an id -
+  and `getVideo()` searched the whole document for `video.html5-main-video`
+  / `video` rather than scoping to the resolved player. Normal watch pages
+  and Shorts each mount their own player element (`#movie_player` vs. the
+  reused singleton `#shorts-player`), and the class name `.html5-video-player`
+  is shared by both. Switching to Shorts and back could leave the extension
+  holding a reference to a stale or wrong player element - and, separately,
+  its `MutationObserver` was never disconnected on navigation, so every
+  earlier player still had a leaked observer attached to a now-detached
+  node. Fixed by making `getPlayer()` resolve by id (`#shorts-player` on
+  `/shorts/*` URLs, `#movie_player` everywhere else, each falling back to
+  the class only if the id lookup finds nothing) and scoping `getVideo()`
+  to always search *within* that resolved player rather than the whole
+  document. `attachObserver()` now disconnects the previous observer before
+  attaching a new one.
+- Wrapped `attemptPlaybackRecovery()`, `attemptStallRecovery()`, and the
+  main `tick()` loop's body in `try/catch/finally`. Previously, an
+  exception thrown partway through a recovery attempt (plausible given the
+  wider variety of player/video shapes now being handled - Shorts feed
+  preloading in particular can mount several player-shaped elements at
+  once) could leave `recoveryCheckPending` stuck `true` forever, silently
+  disabling all further recovery checks with nothing but a manual reload to
+  clear it - the same failure *shape* as the reported bug, just a different
+  possible cause. `tick()` itself is now a thin wrapper that catches and
+  logs any exception from the real tick body, so one bad tick can never
+  again take down every subsequent one.
+- Added `[YT Ad Skipper] fast-forwarding detected ad` diagnostic logging
+  (video id, playlist id from the URL, resolved player element id, duration
+  and current time) right before every fast-forward, specifically so a
+  future "it skipped through my whole playlist" report can be matched
+  against exactly which video got jumped, instead of guessed at.
+
+### Investigated, not confirmed fixed
+- **Playlist playback**: reported as "won't play any normal videos while
+  inside a playlist, it just keeps going through the playlist." No
+  ad-block-warning or stuck-playback signal was involved in the report,
+  which rules out every mechanism this extension's watchdogs act on - the
+  likelier explanation is a false-positive `isAdShowing()` match (the
+  player picking up an `ad-showing`/`ad-interrupting` class on the actual
+  content video, not an ad) that then gets fast-forwarded via the same code
+  path as a real ad. This is a genuinely open, unresolved problem in other
+  major ad-blocking extensions too - see AdGuard browser-extension#3453 and
+  Brave brave-browser#52869 - not something specific to this codebase, and
+  I could not reproduce it locally to confirm a root cause here. The new
+  fast-forward diagnostic log above exists specifically to gather real data
+  if this recurs: if it does, the console will show exactly which video got
+  jumped, its duration, and the playlist id, which turns the next report
+  into a reproducible case instead of another guess.
+- Regression-tested the Shorts fix against two new scenarios: a full
+  watch -> Shorts -> watch round trip (confirms the extension still skips
+  an ad on the second normal video, not just the first), and a Shorts page
+  with multiple simultaneous player-shaped elements alongside the real one
+  (simulating Shorts feed preloading; confirms `getPlayer()`'s id-based
+  lookup ignores the decoys). Also re-ran the full existing 12-scenario
+  suite plus the click-through and fast-forward-duration-guard tests - no
+  regressions.
+
 ## [1.3.5]
 
 ### Fixed

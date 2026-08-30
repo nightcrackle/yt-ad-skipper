@@ -178,6 +178,25 @@ useful for tracking down what's actually going on than a description of
 what was on screen. It's also exactly how the third signal above was
 found — read the log, don't just guess from what's visible on screen.
 
+### Player and video element resolution (Shorts vs. normal watch pages)
+
+Normal watch pages and Shorts each mount a different player element:
+`#movie_player` on a normal watch page, and a reused singleton
+`#shorts-player` on Shorts — both carry the same `.html5-video-player`
+class, so a class-only lookup can't tell them apart, and Shorts additionally
+preloads neighboring feed items, which can mount more than one
+player-shaped element at once. `getPlayer()` resolves by id first
+(`#shorts-player` on `/shorts/*` URLs, `#movie_player` everywhere else),
+falling back to the class only if no id match exists, and `getVideo()`
+always searches *within* whatever `getPlayer()` resolved rather than the
+whole document. This was tightened in 1.3.6 after a report that switching
+to Shorts and back left the extension needing a manual reload to work
+again — the previous class-only, document-wide lookups could end up
+holding a stale or wrong element across that transition. The
+`MutationObserver` watching the player for class changes is also now
+explicitly disconnected before a new one is attached, so navigating
+between pages doesn't accumulate leaked observers on detached nodes.
+
 ## Limitations (read before relying on this)
 
 - This is DOM-based: it reacts to YouTube's existing player markup and
@@ -224,6 +243,21 @@ found — read the log, don't just guess from what's visible on screen.
   and dark schemes. There's no extension API to read an arbitrary custom
   Chrome theme's actual colors, so an unusual custom theme could still
   clash even though light/dark mode itself is handled.
+- **Playlists**: reported behavior where the extension appears to fast-
+  forward through normal videos inside a playlist rather than playing them.
+  This has not been reproduced locally, so it isn't confirmed as a
+  root-caused fix here — the likely mechanism is a false-positive
+  `isAdShowing()` match (the player briefly picking up an
+  `ad-showing`/`ad-interrupting` class on the actual content video, not an
+  ad) that then gets fast-forwarded through the normal skip path. This is a
+  known, currently open, unresolved issue in other major ad-blocking
+  extensions too (see AdGuard browser-extension#3453 and Brave
+  brave-browser#52869), not something unique to this codebase. As of
+  1.3.6, every fast-forward now logs `[YT Ad Skipper] fast-forwarding
+  detected ad` to the console with the video id, playlist id, and resolved
+  player id — if this happens again, that log is what turns it into a
+  reproducible case instead of another guess; please include it when
+  reporting.
 - Not affiliated with Google or YouTube. Using it may be against YouTube's
   Terms of Service depending on how you use it — this is provided for
   personal, educational use, unpacked/local installation only. It is not
@@ -336,14 +370,13 @@ $ echo $?
 0
 ```
 
-Last run: 2026-08-29 12:46 UTC. This block is a static snapshot — it will go
+Last run: 2026-08-30 01:45 UTC. This block is a static snapshot — it will go
 stale as the code changes. Once pushed to GitHub, remove this section (or
 just point to it in the badge) and rely on the live Actions run instead.
 
 ## License
 
-[MIT](LICENSE) — update the copyright line in `LICENSE` with your own name
-or handle before publishing (it currently has a placeholder).
+[MIT](LICENSE)
 
 ## Disclaimer
 
