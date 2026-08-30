@@ -326,8 +326,15 @@
     if (video && isFinite(video.duration) && video.duration > 0) {
       if (video.duration > MAX_PLAUSIBLE_AD_SECONDS) {
         console.warn(
-          '[YT Ad Skipper] not fast-forwarding - duration looks too long to be an ad',
-          { duration: video.duration, url: location.href }
+          '[YT Ad Skipper] not fast-forwarding - duration looks too long to be an ad -',
+          // Stringified, not a raw object: Chrome's console prints a raw
+          // object arg as a collapsed, clickable "Object" placeholder that
+          // only expands to real text once a person manually opens it in
+          // devtools *before* copying - a plain text copy/paste (e.g. into
+          // a bug report) captures just the word "Object" and loses every
+          // field. A JSON string is not summarized this way; it always
+          // copies as the actual data, no expansion required.
+          JSON.stringify({ duration: video.duration, url: location.href })
         );
         return false;
       }
@@ -342,14 +349,21 @@
       } catch (e) {
         // ignore
       }
-      console.info('[YT Ad Skipper] fast-forwarding detected ad', {
-        url: location.href,
-        playlistId,
-        videoId: getVideoId(),
-        durationBefore: video.duration,
-        currentTimeBefore: video.currentTime,
-        playerElementId: getPlayer() ? getPlayer().id : null,
-      });
+      // Stringified for the same reason as the warning above - this log
+      // exists specifically so it can be copy-pasted into a bug report,
+      // and a raw object argument copies as just "Object" unless manually
+      // expanded in devtools first.
+      console.info(
+        '[YT Ad Skipper] fast-forwarding detected ad -',
+        JSON.stringify({
+          url: location.href,
+          playlistId,
+          videoId: getVideoId(),
+          durationBefore: video.duration,
+          currentTimeBefore: video.currentTime,
+          playerElementId: getPlayer() ? getPlayer().id : null,
+        })
+      );
       video.currentTime = video.duration;
       return true;
     }
@@ -496,7 +510,12 @@
       videoError: video && video.error ? { code: video.error.code, message: video.error.message } : null,
       adblockWarningPresent: Boolean(findAdblockWarningElement()),
     };
-    console.warn('[YT Ad Skipper] stuck playback detected -', info);
+    // Stringified, not the raw `info` object - see the comment on the
+    // "not fast-forwarding" warning above for why: a raw object argument
+    // copies out of the console as just the word "Object" unless a person
+    // manually expands it in devtools first, and this log exists
+    // specifically to be copy-pasted into a bug report.
+    console.warn('[YT Ad Skipper] stuck playback detected -', JSON.stringify(info));
     return info;
   }
 

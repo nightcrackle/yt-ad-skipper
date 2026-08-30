@@ -3,6 +3,26 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.7]
+
+### Fixed
+- The diagnostic logs this extension prints (`stuck playback detected`,
+  `fast-forwarding detected ad`, `not fast-forwarding - duration looks too
+  long`) passed their data as a raw JS object argument to
+  `console.warn`/`console.info`. Chrome's console renders a raw object
+  argument as a collapsed, clickable `Object` placeholder - copying the log
+  as plain text (e.g. right-click, or a text selection, without first
+  manually expanding it in devtools) captures only the word "Object" and
+  loses every field. Found from a real user report: a pasted console dump
+  showed `content.js:499 [YT Ad Skipper] stuck playback detected - Object`
+  - completely uninformative, and the exact failure mode these logs exist
+  to avoid. All three now `JSON.stringify()` their payload before logging,
+  so a plain-text copy/paste always captures the real data, no manual
+  expansion required. Re-verified against the full existing regression
+  suite plus both new Shorts fixtures added in 1.3.6 - the log text changed
+  (now a JSON string instead of a live object reference) but nothing about
+  when or why a log fires changed, and nothing regressed.
+
 ## [1.3.6]
 
 ### Fixed

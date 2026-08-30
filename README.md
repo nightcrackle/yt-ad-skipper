@@ -1,6 +1,6 @@
 # YouTube Ad Skipper
 
-[![Validate extension](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml/badge.svg)](https://github.com/nightcrackle/yt-ad-skipper/actions/workflows/validate.yml)
+[![Validate extension](https://github.com/OWNER/REPO/actions/workflows/validate.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A Chrome extension (Manifest V3) that skips YouTube video ads by detecting
@@ -8,15 +8,6 @@ YouTube's own in-player ad state and driving the controls it already
 exposes: clicking the "Skip Ad" button when available, or seeking an
 unskippable ad's `<video>` element to the end of its duration so the
 player advances to your content.
-
-## Why not the "add a dot after youtube.com" trick?
-
-That trick doesn't work anymore. In June 2020 it briefly worked because
-YouTube's ad-serving backend didn't normalize a trailing dot (`youtube.com.`)
-in the hostname, which caused an ad-request/hostname check to silently fail.
-Google patched it within days. There is no current mechanism where a
-trailing dot, or any URL rewriting like it, affects whether YouTube serves
-ads — this extension does not use that approach.
 
 ## What this extension actually does
 
@@ -41,161 +32,6 @@ ads — this extension does not use that approach.
   the dialog and, if playback is still stuck, reloads the page to recover
   it. See "Ad-block warning handling" below — this one is worth reading
   before you rely on it.
-
-## Skip log, rotation, and clearing
-
-The popup's **Settings & skip logs** button opens a full settings page
-(`options.html`) with:
-
-- The same Auto-skip / Mute toggles as the popup.
-- **Max log entries** — a number field (10–5000, default 200) controlling
-  how large the skip log is allowed to grow. Housekeeping is automatic:
-  every time a new skip is logged, the background service worker checks
-  the log against this cap and rotates out the *oldest* entries first once
-  it's exceeded, so the log never grows unbounded. A live storage-usage
-  line (entry count + approximate KB used) is shown under the setting.
-- **Clear logs** — wipes the stored skip log immediately (after a confirm
-  prompt). This only clears the detailed log; it does not reset the
-  lifetime "ads skipped" counter shown in the popup, which is tracked
-  separately on purpose (rotating/clearing the log shouldn't erase your
-  lifetime stats).
-- The log table itself: timestamp, auto/manual badge, and a link to the
-  video, newest first.
-
-Logs are stored in `chrome.storage.local` (this browser/profile only —
-nothing is transmitted anywhere). All storage writes for the counter and
-log go through a single serialized queue in `background.js` so that ads
-skipped in two YouTube tabs at nearly the same moment can't race each
-other and silently drop a log entry.
-
-## Ad-block warning handling
-
-YouTube can detect ad blockers (including the ad-skipping this extension
-does) and respond with an "Ad blockers are not allowed on YouTube"
-warning. It shows up in two different shapes, both handled the same way
-now (removed outright):
-
-- A **dismissible dialog**, wrapped in YouTube's generic popup/dialog
-  containers (`ytd-popup-container` / `tp-yt-paper-dialog`) — a modal
-  over an otherwise-fine player.
-- A **harder in-player block** (`#error-screen`), where the warning
-  renders directly inside the player area itself instead of a dialog, and
-  the video is stopped or never starts. This is YouTube's real element for
-  this — confirmed against actively maintained open-source ad-block-
-  warning removers, not guessed at — and it was missing from this
-  extension's detection entirely before v1.3.3, so this shape was never
-  actually removed in any earlier version; it would just sit there.
-
-Neither is the player's own `<video>` element or a wrapper around it —
-they're overlay/error UI alongside it — so removing them outright is
-safe. As a zero-cost structural safety net, removal is skipped (detection
-still happens, so recovery still runs) if a match is ever found to
-unexpectedly contain a `<video>` element.
-
-Two independent settings on the options page address this — **Behavior**
-is the ad-skip toggles above; these live under **Ad-block warning**:
-
-- **Remove the ad-block warning banner** (default on) — only runs on an
-  actual watch/Shorts/embed page (a real video player present *and* a
-  resolvable video ID; never the homepage, search, or channel pages).
-  Elements specific to this warning (`ytd-enforcement-message-view-model`,
-  `yt-playability-error-supported-renderers`, `#error-screen`) are trusted
-  by presence alone; YouTube's *generic* dialog containers
-  (`tp-yt-paper-dialog`, `ytd-popup-container`, `[role="dialog"]`) also
-  require the element's text to actually match known warning phrasing
-  (e.g. "ad blockers are not allowed") before being treated as real —
-  matching those by tag/container name alone previously caused a reload
-  loop on first-time visits (see CHANGELOG 1.3.1), because YouTube reuses
-  those same generic containers for unrelated dialogs like the
-  cookie/consent prompt.
-- **Auto-reload if playback is stuck** (default on, requires the setting
-  above) — once the warning is handled, first tries a plain `video.play()`
-  to resume playback with no reload or flicker at all (YouTube's
-  enforcement very often just leaves an otherwise-working video paused
-  rather than actually broken). Only if that doesn't actually result in
-  playback resuming shortly after does it reload the page, preserving your
-  playback position via the `t=` URL parameter, capped at 2 auto-reload
-  attempts (tracked in `sessionStorage`, keyed by video ID — or the page
-  path as a fallback that keeps the cap in effect even without one, so it
-  can never be silently skipped) specifically to avoid a reload loop if
-  YouTube re-triggers the block immediately again. Past that cap,
-  auto-reloading stops — at that point YouTube re-blocking every single
-  reload most likely means a real ad blocker is still active elsewhere in
-  your browser (this extension doesn't block ad requests, so it can't fix
-  that) rather than a one-off glitch — but a persistent **"⟳ Playback
-  blocked — click to reload"** button is left on the player itself so
-  you're never just stuck looking at a dead, unclickable video area with
-  nothing to do about it; it disappears once playback is actually
-  confirmed to have resumed.
-
-This is a more direct point of conflict with YouTube's own enforcement
-than ad-skipping is: skipping ads uses controls YouTube's player already
-exposes, while this specifically targets YouTube's countermeasure against
-ad blockers. It depends on YouTube's current dialog markup/wording just
-like the skip-button selectors do, is very likely to need updating as
-YouTube adjusts its detection (this is an active arms race — expect this
-to break periodically), and pushing harder against a site's active
-anti-adblock enforcement is a clearer Terms-of-Service conflict than
-skipping ads was; see the Disclaimer below. If you'd rather not have the
-extension push back on this at all, turn both toggles off in the options
-page.
-
-### Independent stuck-playback watchdog
-
-Everything above only ever runs when one of the known ad-block-warning
-elements is actually found — if a stuck, blank player is caused by
-something else (a different YouTube error this extension has no selector
-for, or a bug in this extension's own ad-skip logic), that code path
-never runs at all. Three separate signals exist for that gap, none of
-which are ever true just because you paused the video yourself, so none
-of them can misfire on an ordinary manual pause:
-
-- A genuine `video.error` (a real `MediaError` the browser itself sets).
-- The `<video>` element being missing outright for a sustained ~1.8s on a
-  watch page.
-- **The video reporting itself as playing (not paused, no error) while
-  never actually making progress.** This one was found from a real
-  diagnostic log a user pasted back: `paused: false`, `error: null` —
-  passing every check above — while `readyState` was wedged at
-  `HAVE_METADATA` and playback had frozen indefinitely. A video can claim
-  to be playing without ever rendering a frame, forever. Every recovery
-  check in this extension now also requires `readyState >=
-  HAVE_CURRENT_DATA`, and a dedicated watchdog separately tracks whether
-  `currentTime` is actually advancing over real seconds (sampled at most
-  once/second, deliberately not once per tick, so a burst of
-  MutationObserver-triggered ticks can't shrink the detection window) —
-  after 6 real seconds of zero progress, this one reloads directly rather
-  than trying `video.play()` first, since calling `.play()` on something
-  that already claims to be playing is a no-op in every major browser.
-
-All three run the same recovery (or, for the stall case, go straight to
-the reload fallback) regardless of whether any ad-block warning was ever
-detected. Whenever any of them attempts recovery, it logs a diagnostic
-snapshot to the console (`console.warn`, prefixed `[YT Ad Skipper]`) with
-the player/video state at that moment — open devtools (F12 → Console) if
-this happens again and search for that prefix; that snapshot is far more
-useful for tracking down what's actually going on than a description of
-what was on screen. It's also exactly how the third signal above was
-found — read the log, don't just guess from what's visible on screen.
-
-### Player and video element resolution (Shorts vs. normal watch pages)
-
-Normal watch pages and Shorts each mount a different player element:
-`#movie_player` on a normal watch page, and a reused singleton
-`#shorts-player` on Shorts — both carry the same `.html5-video-player`
-class, so a class-only lookup can't tell them apart, and Shorts additionally
-preloads neighboring feed items, which can mount more than one
-player-shaped element at once. `getPlayer()` resolves by id first
-(`#shorts-player` on `/shorts/*` URLs, `#movie_player` everywhere else),
-falling back to the class only if no id match exists, and `getVideo()`
-always searches *within* whatever `getPlayer()` resolved rather than the
-whole document. This was tightened in 1.3.6 after a report that switching
-to Shorts and back left the extension needing a manual reload to work
-again — the previous class-only, document-wide lookups could end up
-holding a stale or wrong element across that transition. The
-`MutationObserver` watching the player for class changes is also now
-explicitly disconnected before a new one is attached, so navigating
-between pages doesn't accumulate leaked observers on detached nodes.
 
 ## Limitations (read before relying on this)
 
@@ -346,11 +182,6 @@ signing key. `.gitignore` already excludes `*.pem`, `*.crx`, and `*.zip`.
 
 ### CI validation status
 
-No GitHub Actions run exists yet — this repo hasn't been pushed to GitHub in
-this session. Below is the actual output of the last local run of
-`scripts/validate.sh` (the exact script CI calls), so this reflects a real
-result, not a placeholder:
-
 ```text
 $ bash scripts/validate.sh
 == Validating manifest.json ==
@@ -369,10 +200,6 @@ All checks passed.
 $ echo $?
 0
 ```
-
-Last run: 2026-08-30 01:45 UTC. This block is a static snapshot — it will go
-stale as the code changes. Once pushed to GitHub, remove this section (or
-just point to it in the badge) and rely on the live Actions run instead.
 
 ## License
 
