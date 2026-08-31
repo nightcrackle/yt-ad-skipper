@@ -3,6 +3,63 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.9]
+
+### Added
+- Filled the exact gap surfaced by the 1.3.8 report: the diagnostic log
+  only ever fired at the *start* of a recovery check, so there was no way
+  to tell from a pasted console log whether the video was actually healthy
+  (no action needed), recovered after a plain `video.play()` (no reload
+  needed), or genuinely required a reload - all three looked identical
+  from the outside. `attemptPlaybackRecovery()` now logs each of these
+  outcomes explicitly (`recovery check: already healthy, no action taken`,
+  `recovery check: video.play() worked, no reload needed`), on top of the
+  reload/cap-hit logging already added in 1.3.8.
+- **Stall watchdog heartbeat.** The independent watchdog that tracks
+  `currentTime` not advancing only ever logged once it crossed the full
+  6-second action threshold - a video that stops advancing but never
+  quite reaches 6 seconds (currentTime jitters just enough to reset the
+  counter now and then, or the tab is backgrounded and ticks slow down)
+  produced zero console output for the entire time it was visibly frozen.
+  That's exactly the gap in the last report: nothing logged between the
+  last health check and the freeze being noticed. Now logs once per real
+  second of accumulated non-advancement (`stall watchdog tracking - video
+  not advancing`, with `stalledSeconds`, `readyState`, `networkState`), and
+  once more if the counter clears on its own before hitting the threshold
+  (`currentTime resumed advancing on its own`) - so a stall that
+  self-resolves without this extension ever stepping in is now visible
+  too, not just the ones that end in a forced reload.
+
+### Changed
+- The `MutationObserver` watching the player for class changes now
+  debounces to at most one `tick()` call per 150ms, instead of one per raw
+  mutation event. Motivation: a real diagnostic log showed the player with
+  `playing-mode`, `buffering-mode`, and `unstarted-mode` classes all
+  present at once, pointing at frequent class churn - and calling the full
+  tick() (DOM queries, selector matching, health checks) once per mutation
+  during a burst of churn adds this extension's own synchronous
+  main-thread work on top of a player that may already be struggling.
+  150ms is well under the existing 300ms polling interval, so ad-skip
+  responsiveness isn't meaningfully affected. This is a hedge, not a
+  confirmed fix - it's motivated by that one log, not by a proven causal
+  link to the reported stalls.
+
+### Investigated, not confirmed fixed
+- Root cause of the stuck-playback reports is still open. Confirmed so
+  far: only happens with this extension enabled; not DNS-level ad
+  blocking; the one occurrence with a fully-expanded diagnostic showed a
+  *healthy* video (`readyState: 4`) at the moment it was checked, with no
+  reload logged - meaning the extension correctly took no action that
+  time. A separate report showed a storm of repeated, unused
+  `generate_204`/thumbnail preload warnings for the same video preceding
+  an eventual freeze, consistent with YouTube's own player struggling to
+  hold a connection to a CDN edge pool before giving up - not something
+  this extension has any permission to cause directly (`manifest.json`
+  requests only `storage`). Auto-reload was reported as not fixing it the
+  last time it ran, without confirmation of whether it fired at all. The
+  logging added in this release is specifically meant to answer that on
+  the next occurrence.
+
 ## [1.3.8]
 
 ### Investigated, not confirmed fixed

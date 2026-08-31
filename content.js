@@ -562,6 +562,12 @@
         return;
       }
       if (looksHealthy(video)) {
+        // Logged so this outcome shows up explicitly instead of having to
+        // be inferred from the absence of a later reload log - a report
+        // that only pastes the diagnosePlaybackState snapshot above this
+        // has no way to tell "checked and it was fine" apart from "checked
+        // and something happened but wasn't logged."
+        console.info('[YT Ad Skipper] recovery check: already healthy, no action taken -', JSON.stringify({ reason }));
         return;
       }
       // Try the light fix first: a plain video.play() resumes it
@@ -577,7 +583,9 @@
       setTimeout(() => {
         try {
           const v = getVideo();
-          if (!looksHealthy(v)) {
+          if (looksHealthy(v)) {
+            console.info('[YT Ad Skipper] recovery check: video.play() worked, no reload needed -', JSON.stringify({ reason }));
+          } else {
             reloadToRecoverPlayback();
           }
         } catch (e) {
@@ -843,9 +851,44 @@
       if (watchdogVideo && !watchdogVideo.paused && !watchdogVideo.error) {
         const now = Date.now();
         if (now - lastStallSampleTime >= STALL_SAMPLE_INTERVAL_MS) {
-          if (lastStallSampleCurrentTime >= 0 && Math.abs(watchdogVideo.currentTime - lastStallSampleCurrentTime) < 0.15) {
+          const notAdvancing =
+            lastStallSampleCurrentTime >= 0 && Math.abs(watchdogVideo.currentTime - lastStallSampleCurrentTime) < 0.15;
+          if (notAdvancing) {
             stalledSeconds += (now - lastStallSampleTime) / 1000;
+            // Heartbeat, not just the eventual action at the 6s threshold -
+            // without this, a video that stops advancing but never quite
+            // reaches 6 full seconds (currentTime jitters just enough to
+            // occasionally reset the counter, or the tab is backgrounded
+            // and ticks slow down) produces zero console output for the
+            // entire time it's visibly frozen, which is exactly the gap a
+            // real report ran into: nothing logged between the last health
+            // check and the freeze actually being noticed. Logged once per
+            // real second of accumulated stall time, same cadence as the
+            // sampling itself, so this can't spam faster than that.
+            console.warn(
+              '[YT Ad Skipper] stall watchdog tracking - video not advancing -',
+              JSON.stringify({
+                stalledSeconds: Math.round(stalledSeconds * 10) / 10,
+                threshold: STALLED_SECONDS_THRESHOLD,
+                currentTime: watchdogVideo.currentTime,
+                readyState: watchdogVideo.readyState,
+                networkState: watchdogVideo.networkState,
+                url: location.href,
+              })
+            );
           } else {
+            if (stalledSeconds > 0) {
+              // The counter was building toward the threshold and then
+              // cleared on its own - i.e. it self-recovered without this
+              // extension ever stepping in. Worth knowing on its own: it
+              // confirms transient stalls do resolve by themselves
+              // sometimes, which is the exact scenario the reload-based
+              // recovery risks interrupting if it fires too eagerly.
+              console.info(
+                '[YT Ad Skipper] stall watchdog: currentTime resumed advancing on its own -',
+                JSON.stringify({ stalledSecondsWas: Math.round(stalledSeconds * 10) / 10, currentTime: watchdogVideo.currentTime })
+              );
+            }
             stalledSeconds = 0;
           }
           lastStallSampleCurrentTime = watchdogVideo.currentTime;
@@ -901,8 +944,34 @@
     // current one.
     if (playerObserver) playerObserver.disconnect();
     observedPlayer = player;
-    playerObserver = new MutationObserver(() => tick());
+    playerObserver = new MutationObserver(() => scheduleObserverTick());
     playerObserver.observe(player, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  // A single class mutation batches every attribute change within the
+  // same microtask into one callback (native MutationObserver behavior),
+  // but YouTube's player can still toggle classes across many separate
+  // callback invocations in quick succession - real logs from this
+  // extension have shown `playing-mode`, `buffering-mode`, and
+  // `unstarted-mode` all present on the player at once, which points at
+  // frequent class churn, especially under network/buffering stress.
+  // Calling the full tick() (DOM queries, selector matching, health
+  // checks) once per raw mutation event piles synchronous main-thread
+  // work onto the browser at exactly the moment the player may already
+  // be struggling to keep up. Debounced instead: a burst of mutations
+  // within this window collapses into a single tick() 150ms after the
+  // first one - well under the 300ms interval's own cadence, so ad-skip
+  // responsiveness isn't meaningfully affected, but a rapid-fire storm
+  // of class changes can no longer multiply this extension's own CPU
+  // cost on top of it.
+  let observerTickScheduled = false;
+  function scheduleObserverTick() {
+    if (observerTickScheduled) return;
+    observerTickScheduled = true;
+    setTimeout(() => {
+      observerTickScheduled = false;
+      tick();
+    }, 150);
   }
 
   setInterval(() => {
